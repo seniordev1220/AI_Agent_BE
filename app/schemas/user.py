@@ -20,3 +20,17 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: str | None = None
+
+class UserUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    email: EmailStr | None = None
+
+class UserProfile(UserResponse):
+    # Add any additional fields you want to show in profile
+    class Config:
+        from_attributes = True
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
