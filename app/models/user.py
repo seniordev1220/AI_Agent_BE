@@ -10,3 +10,7 @@ class User(Base):
     first_name = Column(String)
     last_name = Column(String)
     hashed_password = Column(String)
+        
+    # Add relationship to Agent model
+    agents = relationship("Agent", back_populates="user")
+    messages = relationship("ChatMessage", back_populates="user")
