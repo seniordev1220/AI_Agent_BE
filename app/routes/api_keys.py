@@ -133,10 +133,17 @@ async def validate_api_key_format(provider: Provider, api_key: str):
 
     # Provider-specific format validation
     if provider == Provider.OPENAI:
-        if not api_key.startswith("sk-"):
+        # Updated to accept both legacy and new project-based API keys
+        if not api_key.startswith(("sk-", "sk-proj-")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OpenAI API key should start with 'sk-'"
+                detail="OpenAI API key should start with 'sk-' or 'sk-proj-'"
+            )
+        # Check minimum length for OpenAI keys
+        if len(api_key) < 40:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OpenAI API key seems too short"
             )
     elif provider == Provider.ANTHROPIC:
         if not api_key.startswith(("sk-ant-", "sk-")):
@@ -145,13 +152,36 @@ async def validate_api_key_format(provider: Provider, api_key: str):
                 detail="Anthropic API key should start with 'sk-ant-' or 'sk-'"
             )
     elif provider == Provider.HUGGINGFACE:
-        if len(api_key) < 8:  # Example minimum length
+        if not api_key.startswith("hf_"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="HuggingFace API key should start with 'hf_'"
+            )
+        if len(api_key) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="HuggingFace API key seems too short"
             )
+    elif provider == Provider.GEMINI:
+        # Google/Gemini API keys typically start with AIzaSy
+        if not api_key.startswith("AIzaSy"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Gemini API key should start with 'AIzaSy'"
+            )
+        if len(api_key) != 39:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Gemini API key should be 39 characters long"
+            )
+    elif provider == Provider.DEEPSEEK:
+        if not api_key.startswith("sk-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="DeepSeek API key should start with 'sk-'"
+            )
 
-    # General length check
+    # General length check (relaxed for different providers)
     if len(api_key) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -210,4 +240,4 @@ async def validate_existing_api_key(
             detail=f"API key for {provider} is invalid"
         )
     
-    return db_api_key 
+    return db_api_key
