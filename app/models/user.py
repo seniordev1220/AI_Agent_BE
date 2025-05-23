@@ -14,3 +14,4 @@ class User(Base):
     # Add relationship to Agent model
     agents = relationship("Agent", back_populates="user")
     messages = relationship("ChatMessage", back_populates="user")
+    model_settings = relationship("ModelSettings", back_populates="user")

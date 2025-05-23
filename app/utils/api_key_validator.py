@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from ..models.api_key import APIKey
 from ..schemas.api_key import Provider
 
-async def validate_openai_key(api_key: str) -> bool:
+async def validate_openai_key(api_key: str) -> bool:    
     try:
         client = openai.OpenAI(api_key=api_key)
         client.models.list()

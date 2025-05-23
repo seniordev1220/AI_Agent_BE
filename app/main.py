@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .routes import auth, users, api_keys, agents, chat
+from .routes import auth, users, api_keys, agents, chat, model_settings
 from .database import engine
 from .models import user
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ app.include_router(users.router)
 app.include_router(api_keys.router)
 app.include_router(agents.router)
 app.include_router(chat.router)
+app.include_router(model_settings.router)
 
 @app.get("/")
 def root():
