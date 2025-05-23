@@ -9,8 +9,9 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     first_name = Column(String)
     last_name = Column(String)
-    hashed_password = Column(String)
-        
+    hashed_password = Column(String, nullable=True)  # Make nullable for Google auth
+    provider = Column(String, nullable=True)  # Add provider field
+    
     # Add relationship to Agent model
     agents = relationship("Agent", back_populates="user")
     messages = relationship("ChatMessage", back_populates="user")

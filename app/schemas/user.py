@@ -34,3 +34,8 @@ class UserProfile(UserResponse):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+class GoogleAuth(BaseModel):
+    email: EmailStr
+    first_name: str
+    last_name: str

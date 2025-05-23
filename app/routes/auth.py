@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
 from ..database import get_db
-from ..schemas.user import UserCreate, UserResponse, Token
+from ..schemas.user import UserCreate, UserResponse, Token, GoogleAuth
 from ..models.user import User
 from ..utils.password import verify_password, get_password_hash
 from ..utils.auth import create_access_token
@@ -27,7 +27,8 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
-        hashed_password=hashed_password
+        hashed_password=hashed_password,
+        provider="credentials"
     )
     db.add(db_user)
     db.commit()
@@ -47,5 +48,37 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/google", response_model=Token)
+def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
+    """Handle Google OAuth authentication"""
+    # Check if user exists
+    db_user = db.query(User).filter(User.email == user_data.email).first()
+    
+    if db_user:
+        # Update existing user if needed
+        db_user.first_name = user_data.first_name
+        db_user.last_name = user_data.last_name
+        if not db_user.provider:
+            db_user.provider = "google"
+    else:
+        # Create new user
+        db_user = User(
+            email=user_data.email,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+            provider="google"
+        )
+        db.add(db_user)
+    
+    db.commit()
+    db.refresh(db_user)
+    
+    # Create access token
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": db_user.email}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
