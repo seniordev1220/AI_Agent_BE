@@ -8,7 +8,7 @@ class ModelSettings(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    model_name = Column(String, index=True)
+    ai_model_name = Column(String, index=True)
     provider = Column(String)  # 'openai', 'anthropic', 'google', etc.
     is_enabled = Column(Boolean, default=False)
     is_default = Column(Boolean, default=False)

@@ -2,20 +2,26 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
-class ModelBase(BaseModel):
-    model_name: str
+class ModelSettingsBase(BaseModel):
+    ai_model_name: str
     provider: str
-    is_enabled: bool
-    logo_path: str
+    is_enabled: bool = False
+    is_default: bool = False
+    logo_path: str | None = None
 
-class ModelCreate(ModelBase):
+class ModelSettingsCreate(ModelSettingsBase):
     pass
 
-class ModelUpdate(BaseModel):
-    is_enabled: Optional[bool] = None
-    is_default: Optional[bool] = None
+class ModelSettings(ModelSettingsBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
 
-class ModelResponse(ModelBase):
+    class Config:
+        from_attributes = True
+
+class ModelResponse(ModelSettingsBase):
     id: int
     user_id: int
     is_default: bool

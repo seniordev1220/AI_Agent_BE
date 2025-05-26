@@ -10,21 +10,21 @@ from ..utils.auth import get_current_user
 router = APIRouter(prefix="/models", tags=["Models"])
 
 DEFAULT_MODELS = [
-    {"model_name": "GPT-4.5", "provider": "openai", "logo_path": "/model_logo/openai-logo.svg", "is_enabled": False},
-    {"model_name": "O1-mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": False},
-    {"model_name": "GPT-4o Mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
-    {"model_name": "Claude-3.5", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
-    {"model_name": "Claude-3.7", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
-    {"model_name": "Gemini", "provider": "google", "logo_path": "/model_logo/google-logo.svg", "is_enabled": False},
-    {"model_name": "Mistral", "provider": "mistral", "logo_path": "/model_logo/mistral-logo.svg", "is_enabled": False},
+    {"ai_model_name": "GPT-4.5", "provider": "openai", "logo_path": "/model_logo/openai-logo.svg", "is_enabled": False},
+    {"ai_model_name": "O1-mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": False},
+    {"ai_model_name": "GPT-4o Mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
+    {"ai_model_name": "Claude-3.5", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Claude-3.7", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Gemini", "provider": "google", "logo_path": "/model_logo/google-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Mistral", "provider": "mistral", "logo_path": "/model_logo/mistral-logo.svg", "is_enabled": False},
 ]
 
 OPEN_SOURCE_MODELS = [
-    {"model_name": "Hugging Face", "provider": "huggingface", "logo_path": "/model_logo/hf-logo.svg", "is_enabled": False},
-    {"model_name": "DeepSeek", "provider": "deepseek", "logo_path": "/model_logo/deepseek-logo.svg", "is_enabled": False},
-    {"model_name": "Perplexity AI", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
-    {"model_name": "Meta: llama. 3.2 1B", "provider": "meta", "logo_path": "/model_logo/meta-logo.svg", "is_enabled": False},
-    {"model_name": "Perplexity", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Hugging Face", "provider": "huggingface", "logo_path": "/model_logo/hf-logo.svg", "is_enabled": False},
+    {"ai_model_name": "DeepSeek", "provider": "deepseek", "logo_path": "/model_logo/deepseek-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Perplexity AI", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Meta: llama. 3.2 1B", "provider": "meta", "logo_path": "/model_logo/meta-logo.svg", "is_enabled": False},
+    {"ai_model_name": "Perplexity", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
 ]
 
 @router.get("", response_model=ModelsResponse)
@@ -45,11 +45,11 @@ async def get_models(
         for model in DEFAULT_MODELS + OPEN_SOURCE_MODELS:
             setting = ModelSettings(
                 user_id=current_user.id,
-                model_name=model["model_name"],
+                ai_model_name=model["ai_model_name"],
                 provider=model["provider"],
                 is_enabled=model["is_enabled"],
                 logo_path=model["logo_path"],
-                is_default=model["model_name"] == "Claude-3.7"  # Set default model
+                is_default=model["ai_model_name"] == "Claude-3.7"  # Set default model
             )
             db.add(setting)
             user_settings.append(setting)
@@ -59,18 +59,18 @@ async def get_models(
 
     # Separate models into regular and open source
     default_model = next(
-        (m.model_name for m in user_settings if m.is_default),
+        (m.ai_model_name for m in user_settings if m.is_default),
         "Claude-3.7"
     )
     
     regular_models = [
         m for m in user_settings 
-        if m.model_name in [model["model_name"] for model in DEFAULT_MODELS]
+        if m.ai_model_name in [model["ai_model_name"] for model in DEFAULT_MODELS]
     ]
     
     open_source_models = [
         m for m in user_settings 
-        if m.model_name in [model["model_name"] for model in OPEN_SOURCE_MODELS]
+        if m.ai_model_name in [model["ai_model_name"] for model in OPEN_SOURCE_MODELS]
     ]
 
     return ModelsResponse(
@@ -90,7 +90,7 @@ async def set_default_model(
     # Find the model setting
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
-        ModelSettings.model_name == model_name
+        ModelSettings.ai_model_name == model_name
     ).first()
 
     if not model_setting:
@@ -121,7 +121,7 @@ async def toggle_model(
     
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
-        ModelSettings.model_name == model_name
+        ModelSettings.ai_model_name == model_name
     ).first()
 
     if not model_setting:
