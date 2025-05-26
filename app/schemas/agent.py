@@ -2,9 +2,10 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 
+# In app/schemas/agent.py
 class KnowledgeBaseItem(BaseModel):
-    id: str
-    name: str
+    id: int
+    name: Optional[str] = None  # Make name optional
 
 class AgentBase(BaseModel):
     name: str
@@ -19,11 +20,11 @@ class AgentBase(BaseModel):
 
 class AgentCreate(AgentBase):
     avatar_url: Optional[str] = None
-    knowledge_base_ids: Optional[List[str]] = None
+    knowledge_base_ids: Optional[List[int]] = None  # Changed from List[str] to List[int]
 
 class AgentUpdate(AgentBase):
     avatar_url: Optional[str] = None
-    knowledge_base_ids: Optional[List[str]] = None
+    knowledge_base_ids: Optional[List[int]] = None  # Changed from List[str] to List[int]
 
 class AgentResponse(AgentBase):
     id: int

@@ -22,15 +22,17 @@ class Agent(Base):
 
     # Relationship
     user = relationship("User", back_populates="agents")
-    knowledge_bases = relationship("AgentKnowledgeBase", back_populates="agent")
     messages = relationship("ChatMessage", back_populates="agent")
-
+    knowledge_bases = relationship("AgentKnowledgeBase", back_populates="agent")
+    
+# In app/models/agent.py
 class AgentKnowledgeBase(Base):
     __tablename__ = "agent_knowledge_bases"
 
     id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(Integer, ForeignKey("agents.id"))
-    knowledge_base_id = Column(String)  # ID of the selected knowledge base
+    knowledge_base_id = Column(Integer)  # ID of the selected knowledge base
+    name = Column(String, nullable=True)  # Changed to nullable
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationship

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import base64
 import json
+from pydantic import ValidationError
 from ..database import get_db
 from ..models.user import User
 from ..models.agent import Agent, AgentKnowledgeBase
@@ -20,7 +21,18 @@ async def create_agent(
 ):
     """Create a new agent"""
     try:
-        agent_data = AgentCreate(**json.loads(agent_data))
+        # Parse directly with Pydantic
+        agent_create = AgentCreate(**json.loads(agent_data))
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid JSON format in agent_data"
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.errors()
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -40,30 +52,49 @@ async def create_agent(
     
     db_agent = Agent(
         user_id=current_user.id,
-        name=agent_data.name,
-        description=agent_data.description,
-        is_private=agent_data.is_private,
-        welcome_message=agent_data.welcome_message,
-        instructions=agent_data.instructions,
-        base_model=agent_data.base_model,
-        category=agent_data.category,
+        name=agent_create.name,
+        description=agent_create.description,
+        is_private=agent_create.is_private,
+        welcome_message=agent_create.welcome_message,
+        instructions=agent_create.instructions,
+        base_model=agent_create.base_model,
+        category=agent_create.category,
         avatar_base64=avatar_base64,
-        reference_enabled=agent_data.reference_enabled
+        reference_enabled=agent_create.reference_enabled
     )
     
     db.add(db_agent)
     db.commit()
     db.refresh(db_agent)
 
-    if agent_data.knowledge_base_ids:
-        for kb_id in agent_data.knowledge_base_ids:
+    if agent_create.knowledge_base_ids:
+        for kb_id in agent_create.knowledge_base_ids:
             db.add(AgentKnowledgeBase(
                 agent_id=db_agent.id,
                 knowledge_base_id=kb_id
             ))
         db.commit()
+        db.refresh(db_agent)
 
-    return db_agent
+    # Convert SQLAlchemy model to dict and add knowledge_bases
+    agent_dict = {
+        "id": db_agent.id,
+        "user_id": db_agent.user_id,
+        "name": db_agent.name,
+        "description": db_agent.description,
+        "is_private": db_agent.is_private,
+        "welcome_message": db_agent.welcome_message,
+        "instructions": db_agent.instructions,
+        "base_model": db_agent.base_model,
+        "category": db_agent.category,
+        "avatar_base64": db_agent.avatar_base64,
+        "reference_enabled": db_agent.reference_enabled,
+        "created_at": db_agent.created_at,
+        "updated_at": db_agent.updated_at,
+        "knowledge_bases": []
+    }
+
+    return agent_dict
 
 @router.get("", response_model=List[AgentResponse])
 async def get_agents(
@@ -99,7 +130,17 @@ async def update_agent(
 ):
     """Update an agent"""
     try:
-        agent_data = AgentUpdate(**json.loads(agent_data))
+        agent_update = AgentUpdate(**json.loads(agent_data))
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid JSON format in agent_data"
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.errors()
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -124,16 +165,16 @@ async def update_agent(
                 detail=f"Error processing avatar: {str(e)}"
             )
 
-    for field, value in agent_data.dict(exclude_unset=True).items():
+    for field, value in agent_update.dict(exclude_unset=True).items():
         if field != "knowledge_base_ids":
             setattr(agent, field, value)
 
-    if agent_data.knowledge_base_ids is not None:
+    if agent_update.knowledge_base_ids is not None:
         db.query(AgentKnowledgeBase).filter(
             AgentKnowledgeBase.agent_id == agent.id
         ).delete()
         
-        for kb_id in agent_data.knowledge_base_ids:
+        for kb_id in agent_update.knowledge_base_ids:
             db.add(AgentKnowledgeBase(
                 agent_id=agent.id,
                 knowledge_base_id=kb_id

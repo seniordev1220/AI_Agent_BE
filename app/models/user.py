@@ -16,3 +16,4 @@ class User(Base):
     agents = relationship("Agent", back_populates="user")
     messages = relationship("ChatMessage", back_populates="user")
     model_settings = relationship("ModelSettings", back_populates="user")
+    data_sources = relationship("DataSource", back_populates="user")

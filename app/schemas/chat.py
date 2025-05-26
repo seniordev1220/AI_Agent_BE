@@ -19,4 +19,11 @@ class ChatMessageResponse(ChatMessageBase):
         from_attributes = True
 
 class ChatHistoryResponse(BaseModel):
-    messages: List[ChatMessageResponse] 
+    messages: List[ChatMessageResponse]
+
+class ChatMessage(BaseModel):
+    content: str
+
+class ChatResponse(BaseModel):
+    response: str
+    sources: List[str] 
