@@ -22,10 +22,10 @@ langchain-community
 langchain-openai
 langchain-chroma
 unstructured==0.10.30
-pdf2image==1.16.3
 python-docx==1.0.1
 aiofiles
-pdfminer.six==20221105
-langchain
 tiktoken
 utils
+anthropic
+google-generativeai
+aiohttp
