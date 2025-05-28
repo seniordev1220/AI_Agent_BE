@@ -163,16 +163,13 @@ async def validate_api_key_format(provider: Provider, api_key: str):
                 detail="HuggingFace API key seems too short"
             )
     elif provider == Provider.GEMINI:
-        # Google/Gemini API keys typically start with AIzaSy
-        if not api_key.startswith("AIzaSy"):
+        # Google/Gemini API keys can have different formats
+        # Remove the strict AIzaSy check
+        print(f"XXXXXX", api_key, len(api_key))
+        if len(api_key) < 20:  # Adjust minimum length as needed
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Gemini API key should start with 'AIzaSy'"
-            )
-        if len(api_key) != 39:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Gemini API key should be 39 characters long"
+                detail="Gemini API key seems too short"
             )
     elif provider == Provider.DEEPSEEK:
         if not api_key.startswith("sk-"):

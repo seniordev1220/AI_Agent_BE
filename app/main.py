@@ -7,17 +7,24 @@ from fastapi.middleware.cors import CORSMiddleware
 user.Base.metadata.create_all(bind=engine)
 
 origins = [
-    "http://localhost:3000",  # Allow requests from your frontend
+    "http://localhost:3000",
+    "https://localhost:3000",
+    "http://3.112.199.154:3000",
+    "https://3.112.199.154:3000",
+    "http://app.finiite.com",
+    "https://app.finiite.com",
 ]
 
-app = FastAPI(title="Your API")
+app = FastAPI(title="Finiite API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,  # Allow cookies (if needed)
-    allow_methods=["*"],     # Allow all HTTP methods
-    allow_headers=["*"],     # Allow all headers
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list methods
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 # Include routers

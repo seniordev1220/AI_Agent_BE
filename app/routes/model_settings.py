@@ -11,8 +11,9 @@ router = APIRouter(prefix="/models", tags=["Models"])
 
 DEFAULT_MODELS = [
     {"ai_model_name": "GPT-4.5", "provider": "openai", "logo_path": "/model_logo/openai-logo.svg", "is_enabled": False},
-    {"ai_model_name": "O1-mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": False},
+    {"ai_model_name": "GPT 3.5 Turbo", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": False},
     {"ai_model_name": "GPT-4o Mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
+    {"ai_model_name": "GPT-4", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
     {"ai_model_name": "Claude-3.5", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
     {"ai_model_name": "Claude-3.7", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
     {"ai_model_name": "Gemini", "provider": "google", "logo_path": "/model_logo/google-logo.svg", "is_enabled": False},
@@ -22,7 +23,6 @@ DEFAULT_MODELS = [
 OPEN_SOURCE_MODELS = [
     {"ai_model_name": "Hugging Face", "provider": "huggingface", "logo_path": "/model_logo/hf-logo.svg", "is_enabled": False},
     {"ai_model_name": "DeepSeek", "provider": "deepseek", "logo_path": "/model_logo/deepseek-logo.svg", "is_enabled": False},
-    {"ai_model_name": "Perplexity AI", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
     {"ai_model_name": "Meta: llama. 3.2 1B", "provider": "meta", "logo_path": "/model_logo/meta-logo.svg", "is_enabled": False},
     {"ai_model_name": "Perplexity", "provider": "perplexity", "logo_path": "/model_logo/perplexity-logo.svg", "is_enabled": False},
 ]

@@ -20,7 +20,7 @@ import os
 from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 
-router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
+router = APIRouter(prefix="/data_knowledge", tags=["Knowledge Base"])
 
 @router.post("/", response_model=DataSourceResponse)
 async def create_data_source(
@@ -49,7 +49,7 @@ async def create_data_source(
     db.refresh(db_data_source)
     return db_data_source
 
-@router.get("/", response_model=List[DataSourceResponse])
+@router.get("", response_model=List[DataSourceResponse])
 async def get_data_sources(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

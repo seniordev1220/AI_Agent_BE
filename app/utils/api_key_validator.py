@@ -62,7 +62,7 @@ async def validate_perplexity_key(api_key: str) -> bool:
 async def validate_api_key(provider: Provider, api_key: str) -> bool:
     validation_functions = {
         Provider.OPENAI: validate_openai_key,
-        Provider.GOOGLE: validate_google_key,
+        Provider.GEMINI: validate_google_key,
         Provider.DEEPSEEK: validate_deepseek_key,
         Provider.ANTHROPIC: validate_anthropic_key,
         Provider.HUGGINGFACE: validate_huggingface_key,

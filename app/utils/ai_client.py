@@ -9,6 +9,7 @@ async def get_ai_response(conversation: Dict) -> str:
     """
     Get response from AI model based on provider
     """
+    print(f"XXXXXX", conversation)
     provider = conversation["provider"]
     api_key = conversation["api_key"]
     messages = conversation["messages"]
@@ -20,6 +21,7 @@ async def get_ai_response(conversation: Dict) -> str:
             model=model,
             messages=messages
         )
+        print(f"XXXXXX", response)
         return response.choices[0].message.content
 
     elif provider == "anthropic":

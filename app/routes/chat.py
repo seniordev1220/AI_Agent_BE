@@ -55,7 +55,6 @@ async def create_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"No valid API key found for {model_setting.provider}"
         )
-
     # Save user message
     user_message = ChatMessage(
         agent_id=agent_id,
@@ -77,16 +76,15 @@ async def create_message(
 
         # Prepare conversation context
         conversation = {
-            "messages": [{"role": msg.role, "content": msg.content} for msg in chat_history],
+            "messages": message.content,
             "agent_instructions": agent.instructions,
             "model": message.model,  # Use requested model
             "provider": model_setting.provider,
-            "api_key": api_key.key
+            "api_key": api_key.api_key
         }
 
         # Get AI response
         ai_response = await get_ai_response(conversation)
-
         # Save AI response
         ai_message = ChatMessage(
             agent_id=agent_id,
