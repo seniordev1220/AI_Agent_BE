@@ -1,11 +1,17 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
 # In app/schemas/agent.py
 class KnowledgeBaseItem(BaseModel):
     id: int
-    name: Optional[str] = None  # Make name optional
+    name: str
+    file_type: str
+    file_size: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 class AgentBase(BaseModel):
     name: str
@@ -26,12 +32,21 @@ class AgentUpdate(AgentBase):
     avatar_url: Optional[str] = None
     knowledge_base_ids: Optional[List[int]] = None  # Changed from List[str] to List[int]
 
-class AgentResponse(AgentBase):
+class AgentResponse(BaseModel):
     id: int
     user_id: int
-    created_at: datetime
-    updated_at: datetime
+    name: str
+    description: Optional[str] = None
+    is_private: bool
+    welcome_message: Optional[str] = None
+    instructions: Optional[str] = None
+    base_model: str
+    category: Optional[str] = None
+    avatar_base64: Optional[str] = None
+    reference_enabled: bool
     knowledge_bases: List[KnowledgeBaseItem] = []
+    created_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True 
+        from_attributes = True 

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 import base64
 import json
+import os
 from pydantic import ValidationError
 from ..database import get_db
 from ..models.user import User
@@ -201,3 +202,56 @@ async def delete_agent(
 
     db.delete(agent)
     db.commit()
+
+@router.post("/{agent_id}/knowledge-bases/upload", response_model=AgentResponse)
+async def upload_knowledge_base(
+    agent_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a file and create a knowledge base entry for an agent"""
+    
+    # Check if agent exists and belongs to user
+    agent = db.query(Agent).filter(
+        Agent.id == agent_id,
+        Agent.user_id == current_user.id
+    ).first()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        # Create directory if it doesn't exist
+        upload_dir = f"uploads/agent_{agent_id}/knowledge_bases"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Save file
+        file_path = os.path.join(upload_dir, file.filename)
+        contents = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
+
+        # Create knowledge base entry
+        knowledge_base = AgentKnowledgeBase(
+            agent_id=agent_id,
+            name=file.filename,
+            file_path=file_path,
+            file_type=file.content_type,
+            file_size=len(contents)
+        )
+        
+        db.add(knowledge_base)
+        db.commit()
+        db.refresh(agent)
+
+        return agent
+
+    except Exception as e:
+        # Clean up file if saved
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error uploading file: {str(e)}"
+        )
