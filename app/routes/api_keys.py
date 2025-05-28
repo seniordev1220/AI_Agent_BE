@@ -165,7 +165,6 @@ async def validate_api_key_format(provider: Provider, api_key: str):
     elif provider == Provider.GEMINI:
         # Google/Gemini API keys can have different formats
         # Remove the strict AIzaSy check
-        print(f"XXXXXX", api_key, len(api_key))
         if len(api_key) < 20:  # Adjust minimum length as needed
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -29,3 +29,5 @@ utils
 anthropic
 google-generativeai
 aiohttp
+docx2txt
+transformers

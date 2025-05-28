@@ -31,7 +31,6 @@ async def create_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent not found"
         )
-
     # Check if requested model is enabled
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
@@ -43,7 +42,6 @@ async def create_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Model {message.model} is not enabled or not found"
         )
-
     # Check API key for the model's provider
     api_key = db.query(APIKey).filter(
         APIKey.user_id == current_user.id,
@@ -73,7 +71,6 @@ async def create_message(
             ChatMessage.agent_id == agent_id,
             ChatMessage.user_id == current_user.id
         ).order_by(ChatMessage.created_at.asc()).all()
-
         # Prepare conversation context
         conversation = {
             "messages": message.content,
@@ -82,7 +79,6 @@ async def create_message(
             "provider": model_setting.provider,
             "api_key": api_key.api_key
         }
-
         # Get AI response
         ai_response = await get_ai_response(conversation)
         # Save AI response

@@ -15,6 +15,10 @@ class ProcessedData(Base):
     last_processed = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    total_tokens = Column(Integer, nullable=True)
+    processed_size_bytes = Column(Integer)
+    total_size_bytes = Column(Integer, nullable=True)
+    chunk_count = Column(Integer)
 
     # Relationship
     data_source = relationship("DataSource", backref="processed_data") 

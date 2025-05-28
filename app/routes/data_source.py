@@ -20,7 +20,7 @@ import os
 from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 
-router = APIRouter(prefix="/data_knowledge", tags=["Knowledge Base"])
+router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
 @router.post("/", response_model=DataSourceResponse)
 async def create_data_source(
@@ -246,4 +246,28 @@ async def get_supported_file_types():
     file_handler = FileHandler()
     return {
         "supported_extensions": file_handler.get_supported_extensions()
-    } 
+    }
+
+@router.post("/{data_source_id}/connection-test", response_model=DataSourceResponse)
+async def test_data_source_connection(
+    data_source_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    data_source = db.query(DataSource).filter(
+        DataSource.id == data_source_id,
+        DataSource.user_id == current_user.id
+    ).first()
+    
+    if not data_source:
+        raise HTTPException(status_code=404, detail="Data source not found")
+
+    try:
+        # Toggle is_connected status
+        data_source.is_connected = not data_source.is_connected
+        db.commit()
+        db.refresh(data_source)
+        
+        return data_source
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

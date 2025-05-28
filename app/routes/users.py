@@ -62,3 +62,19 @@ async def change_password(
     db.commit()
     
     return {"message": "Password updated successfully"}
+
+@router.get("/{user_id}", response_model=UserProfile)
+async def get_user_by_id(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get user profile by user ID
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return user
