@@ -34,13 +34,11 @@ async def validate_deepseek_key(api_key: str) -> bool:
 async def validate_anthropic_key(api_key: str) -> bool:
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        client.messages.create(
-            model="claude-3-haiku",
-            max_tokens=1,
-            messages=[{"role": "user", "content": "Hi"}]
-        )
+        # Use a simpler validation method
+        models = client.models.list()
         return True
-    except:
+    except Exception as e:
+        print(f"Anthropic validation error: {str(e)}")  # For debugging
         return False
 
 async def validate_huggingface_key(api_key: str) -> bool:

@@ -146,10 +146,15 @@ async def validate_api_key_format(provider: Provider, api_key: str):
                 detail="OpenAI API key seems too short"
             )
     elif provider == Provider.ANTHROPIC:
-        if not api_key.startswith(("sk-ant-", "sk-")):
+        if not api_key.startswith("sk-ant-api"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Anthropic API key should start with 'sk-ant-' or 'sk-'"
+                detail="Anthropic API key should start with 'sk-ant-api'"
+            )
+        if len(api_key) < 100:  # Anthropic keys are typically quite long
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Anthropic API key seems too short"
             )
     elif provider == Provider.HUGGINGFACE:
         if not api_key.startswith("hf_"):
