@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Any
 import openai
 import anthropic
 from google.generativeai import GenerativeModel
@@ -6,9 +6,13 @@ import os
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
-import torch
 import base64
 import google.generativeai as genai
+from PyPDF2 import PdfReader
+from io import BytesIO
+import tempfile
+import time
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Define supported models
 ANTHROPIC_MODELS = [
@@ -20,6 +24,11 @@ GOOGLE_MODELS = [
     "gemini-1.5-pro",
 ]
 
+OPENAI_MODELS = [
+    "gpt-4-turbo",
+    "gpt-4o",
+]
+
 def convert_model_name(model_display_name: str) -> str:
     """
     Convert display model names to their correct API identifiers
@@ -27,10 +36,11 @@ def convert_model_name(model_display_name: str) -> str:
     model_mapping = {
         "GPT 3.5 Turbo": "gpt-3.5-turbo",
         "GPT-4": "gpt-4",
+        "GPT-4o": "gpt-4o",
         "GPT-4o Mini": "gpt-4o-mini",
         "Claude-3.5": "claude-3-5-sonnet-20240620",
         "Claude-3.7": "claude-3-7-sonnet-20240620",
-        "Gemini": "gemini-2.5-flash",
+        "Gemini": "gemini-1.5-flash",
         "Mistral": "mistral-large-latest",
         "Hugging Face": "meta-llama/Llama-2-7b-chat-hf",
         "DeepSeek": "deepseek-chat",
@@ -39,97 +49,148 @@ def convert_model_name(model_display_name: str) -> str:
     }
     return model_mapping.get(model_display_name, model_display_name)
 
-def base64_to_image(base64_string: str):
-    """Convert base64 string to image for Gemini"""
-    if "base64," in base64_string:
-        base64_string = base64_string.split("base64,")[1]
-    image_data = base64.b64decode(base64_string)
-    return genai.types.Image(image_data)
+def extract_text_from_pdf(pdf_path: str) -> str:
+    with open(pdf_path, "rb") as file:
+        reader = PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages])
+    return text
 
-def messages_to_gemini(messages: List[Dict]) -> List[Dict]:
+def process_attachment(attachment: Dict) -> Dict:
+    """Convert attachments to AI-consumable format"""
+    if attachment["type"] in ["pdf", "docx", "txt", "csv"]:
+        if attachment["type"] == "pdf":
+            text = extract_text_from_pdf(attachment["url"])
+        else:
+            with open(attachment["url"], "r") as f:
+                text = f.read()
+        return {"type": "text", "text": f"File: {attachment['name']}\n{text}"}
+    
+    elif attachment["type"] in ["png", "jpg", "jpeg"]:
+        with open(attachment["url"], "rb") as f:
+            image_data = f.read()
+            base64_image = base64.b64encode(image_data).decode("utf-8")
+            mime_type = "jpeg" if attachment["type"] == "jpg" else attachment["type"]
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/{mime_type};base64,{base64_image}"
+                }
+            }
+    else:
+        return {"type": "text", "text": f"Unsupported file: {attachment['name']}"}
+
+def messages_to_openai(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
+    """Format messages for OpenAI (including vision)"""
+    formatted_messages = []
+    
+    for msg in messages:
+        if msg["role"] == "user" and attachments:
+            # For user messages with attachments, format as multimodal content
+            content = []
+            content.append({"type": "text", "text": msg["content"]})
+            
+            for attachment in attachments:
+                content.append(attachment)  # Add attachment as is
+            
+            formatted_messages.append({
+                "role": msg["role"],
+                "content": content
+            })
+        else:
+            # For messages without attachments or non-user messages
+            formatted_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+    
+    return formatted_messages
+
+def base64_to_image(image_data: Dict) -> Any:
+    """Convert base64 image data for Gemini"""
+    if isinstance(image_data, dict) and "data" in image_data:
+        image_bytes = base64.b64decode(image_data["data"])
+        return genai.types.Image(image_bytes)
+    return None
+
+def messages_to_gemini(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
     """Convert messages to Gemini format"""
     gemini_messages = []
-    prev_role = None
     
-    for message in messages:
-        if prev_role and (prev_role == message["role"]):
-            gemini_message = gemini_messages[-1]
-        else:
-            gemini_message = {
-                "role": "model" if message["role"] == "assistant" else "user",
-                "parts": [],
-            }
-
-        for content in message["content"]:
-            if isinstance(content, str):
-                gemini_message["parts"].append(content)
-            elif isinstance(content, dict):
-                if content["type"] == "text":
-                    gemini_message["parts"].append(content["text"])
-                elif content["type"] == "image_url":
-                    gemini_message["parts"].append(
-                        base64_to_image(content["image_url"]["url"])
-                    )
-                elif content["type"] in ["video_file", "audio_file"]:
-                    gemini_message["parts"].append(
-                        genai.upload_file(content[content["type"]])
-                    )
-
-        if prev_role != message["role"]:
-            gemini_messages.append(gemini_message)
-
-        prev_role = message["role"]
+    for msg in messages:
+        parts = []
+        parts.append(msg["content"])
         
+        if msg["role"] == "user" and attachments:
+            for attachment in attachments:
+                if attachment["type"] == "image":
+                    # Convert data URL to bytes for Gemini
+                    image_data = attachment["image_url"].split(",")[1]
+                    image_bytes = base64.b64decode(image_data)
+                    parts.append(genai.types.Image(image_bytes))
+                elif attachment["type"] == "text":
+                    parts.append(attachment["text"])
+        
+        gemini_messages.append({
+            "role": "model" if msg["role"] == "assistant" else "user",
+            "parts": parts
+        })
+    
     return gemini_messages
 
-def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
+def messages_to_anthropic(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
     """Convert messages to Anthropic format"""
     anthropic_messages = []
-    prev_role = None
     
-    for message in messages:
-        if prev_role and (prev_role == message["role"]):
-            anthropic_message = anthropic_messages[-1]
+    for msg in messages:
+        if isinstance(msg["content"], str):
+            # If content is a string, create a single text content
+            content = [{"type": "text", "text": msg["content"]}]
         else:
-            anthropic_message = {
-                "role": message["role"],
-                "content": [],
-            }
-
-        for content in message["content"]:
-            if isinstance(content, str):
-                anthropic_message["content"].append({"type": "text", "text": content})
-            elif isinstance(content, dict):
-                if content["type"] == "image_url":
-                    # Extract media type and base64 data from the URL
-                    media_type = content["image_url"]["url"].split(";")[0].split(":")[1]
-                    base64_data = content["image_url"]["url"].split(",")[1]
-                    
-                    anthropic_message["content"].append({
+            # If content is already a list, use it as is
+            content = msg["content"]
+        
+        if msg["role"] == "user" and attachments:
+            for attachment in attachments:
+                if attachment["type"] == "image_url":
+                    # Convert OpenAI format to Anthropic format
+                    content.append({
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": media_type,
-                            "data": base64_data
+                            "media_type": attachment["image_url"]["url"].split(";")[0].split("/")[1],
+                            "data": attachment["image_url"]["url"].split(",")[1]
                         }
                     })
-                else:
-                    anthropic_message["content"].append(content)
-
-        if prev_role != message["role"]:
-            anthropic_messages.append(anthropic_message)
-
-        prev_role = message["role"]
+                elif attachment["type"] == "text":
+                    content.append({"type": "text", "text": attachment["text"]})
         
+        anthropic_messages.append({
+            "role": msg["role"],
+            "content": content
+        })
+    
     return anthropic_messages
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    retry_error_callback=lambda e: isinstance(e, (
+        anthropic.APIStatusError,
+        anthropic.APITimeoutError,
+        anthropic.APIConnectionError,
+        anthropic.APIResponseValidationError
+    ))
+)
 async def get_ai_response(conversation: Dict) -> str:
-    """
-    Get response from AI model based on provider
-    """
+    """Get response from AI model based on provider"""
     provider = conversation["provider"]
     api_key = conversation["api_key"]
     messages = conversation["messages"]
+    attachments = conversation.get("attachments", [])
+    
+    # Process attachments first
+    processed_attachments = [process_attachment(a) for a in attachments]
+    
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
     
@@ -137,38 +198,53 @@ async def get_ai_response(conversation: Dict) -> str:
     
     if provider == "openai":
         client = OpenAI(api_key=api_key)
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"OpenAI API Error: {str(e)}")
-            raise
-
+        formatted_messages = messages_to_openai(messages, processed_attachments)
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=formatted_messages,
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    
     elif provider == "anthropic":
         if model not in ANTHROPIC_MODELS:
             raise ValueError(f"Unsupported Anthropic model: {model}")
             
         client = anthropic.Anthropic(api_key=api_key)
-        anthropic_messages = messages_to_anthropic(messages)
+        anthropic_messages = messages_to_anthropic(messages, processed_attachments)
         
-        response = client.messages.create(
-            model=model,
-            max_tokens=1024,
-            messages=anthropic_messages,
-            temperature=0.7
-        )
-        return response.content[0].text
+        try:
+            # Add system message if agent instructions exist
+            if "agent_instructions" in conversation and conversation["agent_instructions"]:
+                system_message = {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": conversation["agent_instructions"]}]
+                }
+                anthropic_messages.insert(0, system_message)
+
+            response = client.messages.create(
+                model=model,
+                max_tokens=4096,
+                messages=anthropic_messages,
+                temperature=0.7,
+                system=conversation.get("agent_instructions", "You are a helpful AI assistant.")
+            )
+            return response.content[0].text
+        except (anthropic.APIStatusError, anthropic.APITimeoutError) as e:
+            if "overloaded" in str(e).lower():
+                time.sleep(2)
+            raise e
+        except Exception as e:
+            raise Exception(f"Anthropic API Error: {str(e)}")
 
     elif provider == "gemini":
         if model not in GOOGLE_MODELS:
             raise ValueError(f"Unsupported Gemini model: {model}")
             
         genai.configure(api_key=api_key)
-        model_instance = genai.GenerativeModel(convert_model_name(model))
-        gemini_messages = messages_to_gemini(messages)
+        model_instance = genai.GenerativeModel(model)
+        gemini_messages = messages_to_gemini(messages, processed_attachments)
         
         chat = model_instance.start_chat(history=gemini_messages[:-1])
         response = chat.send_message(gemini_messages[-1]["parts"])

@@ -31,3 +31,4 @@ google-generativeai
 aiohttp
 docx2txt
 transformers
+PyPDF2

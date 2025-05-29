@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from sqlalchemy.orm import Session, joinedload
+from typing import List, Dict
 from ..database import get_db
 from ..models.user import User
 from ..models.chat import ChatMessage
@@ -10,13 +10,41 @@ from ..models.api_key import APIKey
 from ..schemas.chat import ChatMessageCreate, ChatMessageResponse, ChatHistoryResponse
 from ..utils.auth import get_current_user
 from ..utils.ai_client import get_ai_response
+import os
+import uuid
+import shutil
+from ..models.chat import FileAttachment
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+# Define upload directory and create it if it doesn't exist
+UPLOAD_DIR = "uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+async def save_uploaded_file(file: UploadFile, user_id: int) -> Dict:
+    """Save uploaded file and return metadata"""
+    file_ext = file.filename.split(".")[-1].lower()
+    file_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOAD_DIR, f"{user_id}_{file_id}.{file_ext}")
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    return {
+        "name": file.filename,
+        "type": file_ext,
+        "url": file_path,
+        "size": os.path.getsize(file_path)
+    }
+        
 
 @router.post("/{agent_id}/messages", response_model=ChatMessageResponse)
 async def create_message(
     agent_id: int,
-    message: ChatMessageCreate,
+    content: str = Form(...),
+    model: str = Form(...),
+    files: List[UploadFile] = File(default=[]),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -34,13 +62,13 @@ async def create_message(
     # Check if requested model is enabled
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
-        ModelSettings.ai_model_name == message.model,  # Check requested model
+        ModelSettings.ai_model_name == model,
         ModelSettings.is_enabled == True
     ).first()
     if not model_setting:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Model {message.model} is not enabled or not found"
+            detail=f"Model {model} is not enabled or not found"
         )
     # Check API key for the model's provider
     api_key = db.query(APIKey).filter(
@@ -58,12 +86,36 @@ async def create_message(
         agent_id=agent_id,
         user_id=current_user.id,
         role="user",
-        content=message.content,
-        model=message.model  # Save the model used
+        content=content,
+        model=model
     )
     db.add(user_message)
     db.commit()
     db.refresh(user_message)
+
+    # Save file attachments
+    file_attachments = []
+    for file in files:
+        try:
+            attachment_data = await save_uploaded_file(file, current_user.id)
+            # Create FileAttachment record
+            file_attachment = FileAttachment(
+                message_id=user_message.id,
+                name=attachment_data["name"],
+                type=attachment_data["type"],
+                url=attachment_data["url"],
+                size=attachment_data["size"]
+            )
+            db.add(file_attachment)
+            file_attachments.append(attachment_data)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error saving file: {str(e)}"
+            )
+    
+    db.commit()
 
     try:
         # Get chat history
@@ -71,23 +123,41 @@ async def create_message(
             ChatMessage.agent_id == agent_id,
             ChatMessage.user_id == current_user.id
         ).order_by(ChatMessage.created_at.asc()).all()
+        
+        # Format chat history into messages
+        formatted_messages = []
+        for msg in chat_history:
+            formatted_messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        # Add current message
+        formatted_messages.append({
+            "role": "user",
+            "content": content
+        })
+        
         # Prepare conversation context
         conversation = {
-            "messages": message.content,
+            "messages": formatted_messages,
             "agent_instructions": agent.instructions,
-            "model": message.model,  # Use requested model
+            "model": model,
             "provider": model_setting.provider,
-            "api_key": api_key.api_key
+            "api_key": api_key.api_key,
+            "attachments": file_attachments
         }
+        
         # Get AI response
         ai_response = await get_ai_response(conversation)
+        
         # Save AI response
         ai_message = ChatMessage(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
             content=ai_response,
-            model=message.model  # Save the model used
+            model=model
         )
         db.add(ai_message)
         db.commit()
@@ -109,12 +179,36 @@ async def get_chat_history(
     db: Session = Depends(get_db)
 ):
     """Get chat history for an agent"""
-    messages = db.query(ChatMessage).filter(
+    # Query messages with attachments using joinedload
+    messages = db.query(ChatMessage).options(
+        joinedload(ChatMessage.attachments)
+    ).filter(
         ChatMessage.agent_id == agent_id,
         ChatMessage.user_id == current_user.id
     ).order_by(ChatMessage.created_at.asc()).all()
     
-    return ChatHistoryResponse(messages=messages)
+    # Format response with attachments
+    formatted_messages = []
+    for msg in messages:
+        formatted_message = {
+            "id": msg.id,
+            "agent_id": msg.agent_id,
+            "user_id": msg.user_id,
+            "role": msg.role,
+            "content": msg.content,
+            "model": msg.model,
+            "created_at": msg.created_at,
+            "attachments": [{
+                "id": att.id,
+                "name": att.name,
+                "type": att.type,
+                "url": att.url,
+                "size": att.size
+            } for att in msg.attachments]  # Use the loaded relationship
+        }
+        formatted_messages.append(formatted_message)
+    
+    return ChatHistoryResponse(messages=formatted_messages)
 
 @router.delete("/{agent_id}/history", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_chat_history(
