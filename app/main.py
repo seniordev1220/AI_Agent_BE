@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from .routes import auth, users, api_keys, agents, chat, model_settings, data_source
 from .database import engine

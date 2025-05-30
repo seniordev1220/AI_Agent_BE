@@ -45,7 +45,6 @@ async def create_message(
     agent_id: int,
     content: str = Form(...),
     model: str = Form(...),
-    stream: Optional[bool] = Form(False),
     files: List[UploadFile] = File(default=[]),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -150,43 +149,19 @@ async def create_message(
             "attachments": file_attachments
         }
 
-        if stream:
-            # Create a streaming response
-            async def response_stream():
-                ai_content = []
-                async for chunk in await get_ai_response(conversation, stream=True):
-                    ai_content.append(chunk)
-                    yield f"data: {chunk}\n\n"
-                
-                # Save the complete message after streaming
-                ai_message = ChatMessage(
-                    agent_id=agent_id,
-                    user_id=current_user.id,
-                    role="assistant",
-                    content="".join(ai_content),
-                    model=model
-                )
-                db.add(ai_message)
-                db.commit()
-
-            return StreamingResponse(
-                response_stream(),
-                media_type="text/event-stream"
-            )
-        else:
-            # Non-streaming response (existing code)
-            ai_response = await get_ai_response(conversation)
-            ai_message = ChatMessage(
-                agent_id=agent_id,
-                user_id=current_user.id,
-                role="assistant",
-                content=ai_response,
-                model=model
-            )
-            db.add(ai_message)
-            db.commit()
-            db.refresh(ai_message)
-            return ai_message
+        # Get AI response
+        ai_response = await get_ai_response(conversation)
+        ai_message = ChatMessage(
+            agent_id=agent_id,
+            user_id=current_user.id,
+            role="assistant",
+            content=ai_response,
+            model=model
+        )
+        db.add(ai_message)
+        db.commit()
+        db.refresh(ai_message)
+        return ai_message
 
     except Exception as e:
         db.rollback()
@@ -327,4 +302,90 @@ async def generate_image(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating image: {str(e)}"
+        )
+
+@router.post("/{agent_id}/web-search")
+async def web_search(
+    agent_id: int,
+    content: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Perform web search using Perplexity AI"""
+    try:
+        import httpx
+        import os
+        # Save user query message first
+        user_message = ChatMessage(
+            agent_id=agent_id,
+            user_id=current_user.id,
+            role="user",
+            content=f"[Web Search Query] {content}",
+            model="sonar"  # Updated model name
+        )
+        db.add(user_message)
+        db.commit()
+
+        # Get Perplexity API key from environment
+        api_key = os.getenv("PERPLEXITY_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Perplexity API key not configured"
+            )
+
+        # Make request to Perplexity API
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}"
+                },
+                json={
+                    "model": "sonar",
+                    "messages": [
+                        {"role": "system", "content": "Be precise and concise."},
+                        {"role": "user", "content": content}
+                    ]
+                }
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Perplexity API error: {response.text}"
+                )
+
+            result = response.json()
+            
+            # Format the response content with citations and search results
+            ai_content = result["choices"][0]["message"]["content"]
+
+        # Save the enhanced response as assistant's message
+        ai_message = ChatMessage(
+            agent_id=agent_id,
+            user_id=current_user.id,
+            role="assistant",
+            content=ai_content,
+            model="sonar"
+        )
+        db.add(ai_message)
+        db.commit()
+        db.refresh(ai_message)
+
+        return {
+            "message_id": ai_message.id,
+            "content": ai_content,
+            "created_at": ai_message.created_at,
+            "citations": result.get("citations", []),
+            "search_results": result.get("search_results", []),
+            "choices": result.get("choices", [])
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error performing web search: {str(e)}"
         ) 

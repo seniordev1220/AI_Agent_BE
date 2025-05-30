@@ -178,10 +178,9 @@ def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
         
     return anthropic_messages
 
-async def get_ai_response(conversation: Dict, stream: bool = False) -> Union[str, AsyncGenerator[str, None]]:
+async def get_ai_response(conversation: Dict) -> str:
     """
     Get response from AI model based on provider
-    stream: If True, returns an async generator that yields response chunks
     """
     provider = conversation["provider"]
     api_key = conversation["api_key"]
@@ -201,15 +200,8 @@ async def get_ai_response(conversation: Dict, stream: bool = False) -> Union[str
             response = client.chat.completions.create(
                 model=model,
                 messages=formatted_messages,
-                max_tokens=2000,
-                stream=stream
+                max_tokens=2000
             )
-            if stream:
-                async def response_generator():
-                    async for chunk in response:
-                        if chunk.choices[0].delta.content:
-                            yield chunk.choices[0].delta.content
-                return response_generator()
             return response.choices[0].message.content
         else:
             text_only_messages = []
@@ -235,15 +227,8 @@ async def get_ai_response(conversation: Dict, stream: bool = False) -> Union[str
             model=model,
             max_tokens=1024,
             messages=anthropic_messages,
-            temperature=0.7,
-            stream=stream
+            temperature=0.7
         )
-        if stream:
-            async def response_generator():
-                async for chunk in response:
-                    if chunk.content[0].text:
-                        yield chunk.content[0].text
-            return response_generator()
         return response.content[0].text
 
     elif provider == "gemini":
@@ -255,16 +240,7 @@ async def get_ai_response(conversation: Dict, stream: bool = False) -> Union[str
         gemini_messages = messages_to_gemini(messages)
         
         chat = model_instance.start_chat(history=gemini_messages[:-1])
-        response = chat.send_message(
-            gemini_messages[-1]["parts"],
-            stream=stream
-        )
-        if stream:
-            async def response_generator():
-                async for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
-            return response_generator()
+        response = chat.send_message(gemini_messages[-1]["parts"])
         return response.text
 
     elif provider == "deepseek":
