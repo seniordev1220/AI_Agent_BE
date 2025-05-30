@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session, joinedload
-from typing import List, Dict
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from typing import List, Dict, Optional
 from ..database import get_db
 from ..models.user import User
 from ..models.chat import ChatMessage
@@ -39,11 +40,12 @@ async def save_uploaded_file(file: UploadFile, user_id: int) -> Dict:
     }
         
 
-@router.post("/{agent_id}/messages", response_model=ChatMessageResponse)
+@router.post("/{agent_id}/messages")
 async def create_message(
     agent_id: int,
     content: str = Form(...),
     model: str = Form(...),
+    stream: Optional[bool] = Form(False),
     files: List[UploadFile] = File(default=[]),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -147,23 +149,44 @@ async def create_message(
             "api_key": api_key.api_key,
             "attachments": file_attachments
         }
-        
-        # Get AI response
-        ai_response = await get_ai_response(conversation)
-        
-        # Save AI response
-        ai_message = ChatMessage(
-            agent_id=agent_id,
-            user_id=current_user.id,
-            role="assistant",
-            content=ai_response,
-            model=model
-        )
-        db.add(ai_message)
-        db.commit()
-        db.refresh(ai_message)
 
-        return ai_message
+        if stream:
+            # Create a streaming response
+            async def response_stream():
+                ai_content = []
+                async for chunk in await get_ai_response(conversation, stream=True):
+                    ai_content.append(chunk)
+                    yield f"data: {chunk}\n\n"
+                
+                # Save the complete message after streaming
+                ai_message = ChatMessage(
+                    agent_id=agent_id,
+                    user_id=current_user.id,
+                    role="assistant",
+                    content="".join(ai_content),
+                    model=model
+                )
+                db.add(ai_message)
+                db.commit()
+
+            return StreamingResponse(
+                response_stream(),
+                media_type="text/event-stream"
+            )
+        else:
+            # Non-streaming response (existing code)
+            ai_response = await get_ai_response(conversation)
+            ai_message = ChatMessage(
+                agent_id=agent_id,
+                user_id=current_user.id,
+                role="assistant",
+                content=ai_response,
+                model=model
+            )
+            db.add(ai_message)
+            db.commit()
+            db.refresh(ai_message)
+            return ai_message
 
     except Exception as e:
         db.rollback()
@@ -180,9 +203,7 @@ async def get_chat_history(
 ):
     """Get chat history for an agent"""
     # Query messages with attachments using joinedload
-    messages = db.query(ChatMessage).options(
-        joinedload(ChatMessage.attachments)
-    ).filter(
+    messages = db.query(ChatMessage).filter(
         ChatMessage.agent_id == agent_id,
         ChatMessage.user_id == current_user.id
     ).order_by(ChatMessage.created_at.asc()).all()
@@ -190,6 +211,11 @@ async def get_chat_history(
     # Format response with attachments
     formatted_messages = []
     for msg in messages:
+        # Query attachments for this message
+        attachments = db.query(FileAttachment).filter(
+            FileAttachment.message_id == msg.id
+        ).all()
+        
         formatted_message = {
             "id": msg.id,
             "agent_id": msg.agent_id,
@@ -204,7 +230,7 @@ async def get_chat_history(
                 "type": att.type,
                 "url": att.url,
                 "size": att.size
-            } for att in msg.attachments]  # Use the loaded relationship
+            } for att in attachments]
         }
         formatted_messages.append(formatted_message)
     
@@ -221,4 +247,84 @@ async def clear_chat_history(
         ChatMessage.agent_id == agent_id,
         ChatMessage.user_id == current_user.id
     ).delete()
-    db.commit() 
+    db.commit()
+
+@router.post("/{agent_id}/generate-image")
+async def generate_image(
+    agent_id: int,
+    prompt: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate an image using OpenAI DALL-E"""
+    # Check if agent exists and belongs to user
+    agent = db.query(Agent).filter(
+        Agent.id == agent_id,
+        Agent.user_id == current_user.id
+    ).first()
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found"
+        )
+
+    # Check if OpenAI API key exists and is valid
+    api_key = db.query(APIKey).filter(
+        APIKey.user_id == current_user.id,
+        APIKey.provider == "openai",
+        APIKey.is_valid == True
+    ).first()
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid OpenAI API key found"
+        )
+
+    try:
+        # Save user prompt message first
+        user_message = ChatMessage(
+            agent_id=agent_id,
+            user_id=current_user.id,
+            role="user",
+            content=f"[Image Generation Request] {prompt}",
+            model="dall-e-3"
+        )
+        db.add(user_message)
+        db.commit()
+
+        # Generate image
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key.api_key)
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+
+        # Save the generated image URL as assistant's response
+        ai_message = ChatMessage(
+            agent_id=agent_id,
+            user_id=current_user.id,
+            role="assistant",
+            content=f"![Generated Image]({response.data[0].url})",
+            model="dall-e-3"
+        )
+        db.add(ai_message)
+        db.commit()
+        db.refresh(ai_message)
+
+        return {
+            "message_id": ai_message.id,
+            "image_url": response.data[0].url,
+            "created_at": ai_message.created_at
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating image: {str(e)}"
+        ) 

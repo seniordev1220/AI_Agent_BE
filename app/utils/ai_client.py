@@ -1,4 +1,4 @@
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Union, AsyncGenerator
 import openai
 import anthropic
 from google.generativeai import GenerativeModel
@@ -11,8 +11,6 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 from io import BytesIO
 import tempfile
-import time
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Define supported models
 ANTHROPIC_MODELS = [
@@ -68,12 +66,17 @@ def process_attachment(attachment: Dict) -> Dict:
     elif attachment["type"] in ["png", "jpg", "jpeg"]:
         with open(attachment["url"], "rb") as f:
             image_data = f.read()
+            if attachment["type"] == "jpg":
+                mime_type = "jpeg"
+            else:
+                mime_type = attachment["type"]
             base64_image = base64.b64encode(image_data).decode("utf-8")
-            mime_type = "jpeg" if attachment["type"] == "jpg" else attachment["type"]
             return {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/{mime_type};base64,{base64_image}"
+                "type": "image",
+                "image": {
+                    "type": "base64",
+                    "media_type": f"image/{mime_type}",
+                    "data": base64_image
                 }
             }
     else:
@@ -82,27 +85,21 @@ def process_attachment(attachment: Dict) -> Dict:
 def messages_to_openai(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
     """Format messages for OpenAI (including vision)"""
     formatted_messages = []
-    
     for msg in messages:
-        if msg["role"] == "user" and attachments:
-            # For user messages with attachments, format as multimodal content
-            content = []
+        content = []
+        if isinstance(msg["content"], str):
             content.append({"type": "text", "text": msg["content"]})
-            
-            for attachment in attachments:
-                content.append(attachment)  # Add attachment as is
-            
-            formatted_messages.append({
-                "role": msg["role"],
-                "content": content
-            })
-        else:
-            # For messages without attachments or non-user messages
-            formatted_messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
-    
+        elif isinstance(msg["content"], list):
+            content.extend(msg["content"])
+        
+        # Add processed attachments for user messages
+        if msg["role"] == "user" and attachments:
+            content.extend([process_attachment(a) for a in attachments])
+        
+        formatted_messages.append({
+            "role": msg["role"],
+            "content": content
+        })
     return formatted_messages
 
 def base64_to_image(image_data: Dict) -> Any:
@@ -112,84 +109,84 @@ def base64_to_image(image_data: Dict) -> Any:
         return genai.types.Image(image_bytes)
     return None
 
-def messages_to_gemini(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
+def messages_to_gemini(messages: List[Dict]) -> List[Dict]:
     """Convert messages to Gemini format"""
     gemini_messages = []
+    prev_role = None
     
-    for msg in messages:
-        parts = []
-        parts.append(msg["content"])
+    for message in messages:
+        if prev_role and (prev_role == message["role"]):
+            gemini_message = gemini_messages[-1]
+        else:
+            gemini_message = {
+                "role": "model" if message["role"] == "assistant" else "user",
+                "parts": [],
+            }
+
+        for content in message["content"]:
+            if isinstance(content, str):
+                gemini_message["parts"].append(content)
+            elif isinstance(content, dict):
+                if content["type"] == "text":
+                    gemini_message["parts"].append(content["text"])
+                elif content["type"] == "image":
+                    gemini_message["parts"].append(
+                        base64_to_image(content["image"])
+                    )
+                elif content["type"] in ["video_file", "audio_file"]:
+                    gemini_message["parts"].append(
+                        genai.upload_file(content[content["type"]])
+                    )
+
+        if prev_role != message["role"]:
+            gemini_messages.append(gemini_message)
+
+        prev_role = message["role"]
         
-        if msg["role"] == "user" and attachments:
-            for attachment in attachments:
-                if attachment["type"] == "image":
-                    # Convert data URL to bytes for Gemini
-                    image_data = attachment["image_url"].split(",")[1]
-                    image_bytes = base64.b64decode(image_data)
-                    parts.append(genai.types.Image(image_bytes))
-                elif attachment["type"] == "text":
-                    parts.append(attachment["text"])
-        
-        gemini_messages.append({
-            "role": "model" if msg["role"] == "assistant" else "user",
-            "parts": parts
-        })
-    
     return gemini_messages
 
-def messages_to_anthropic(messages: List[Dict], attachments: List[Dict]) -> List[Dict]:
+def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
     """Convert messages to Anthropic format"""
     anthropic_messages = []
+    prev_role = None
     
-    for msg in messages:
-        if isinstance(msg["content"], str):
-            # If content is a string, create a single text content
-            content = [{"type": "text", "text": msg["content"]}]
+    for message in messages:
+        if prev_role and (prev_role == message["role"]):
+            anthropic_message = anthropic_messages[-1]
         else:
-            # If content is already a list, use it as is
-            content = msg["content"]
-        
-        if msg["role"] == "user" and attachments:
-            for attachment in attachments:
-                if attachment["type"] == "image_url":
-                    # Convert OpenAI format to Anthropic format
-                    content.append({
+            anthropic_message = {
+                "role": message["role"],
+                "content": [],
+            }
+
+        for content in message["content"]:
+            if isinstance(content, str):
+                anthropic_message["content"].append({"type": "text", "text": content})
+            elif isinstance(content, dict):
+                if content["type"] == "image":
+                    anthropic_message["content"].append({
                         "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": attachment["image_url"]["url"].split(";")[0].split("/")[1],
-                            "data": attachment["image_url"]["url"].split(",")[1]
-                        }
+                        "source": content["image"]
                     })
-                elif attachment["type"] == "text":
-                    content.append({"type": "text", "text": attachment["text"]})
+                else:
+                    anthropic_message["content"].append(content)
+
+        if prev_role != message["role"]:
+            anthropic_messages.append(anthropic_message)
+
+        prev_role = message["role"]
         
-        anthropic_messages.append({
-            "role": msg["role"],
-            "content": content
-        })
-    
     return anthropic_messages
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry_error_callback=lambda e: isinstance(e, (
-        anthropic.APIStatusError,
-        anthropic.APITimeoutError,
-        anthropic.APIConnectionError,
-        anthropic.APIResponseValidationError
-    ))
-)
-async def get_ai_response(conversation: Dict) -> str:
-    """Get response from AI model based on provider"""
+async def get_ai_response(conversation: Dict, stream: bool = False) -> Union[str, AsyncGenerator[str, None]]:
+    """
+    Get response from AI model based on provider
+    stream: If True, returns an async generator that yields response chunks
+    """
     provider = conversation["provider"]
     api_key = conversation["api_key"]
     messages = conversation["messages"]
     attachments = conversation.get("attachments", [])
-    
-    # Process attachments first
-    processed_attachments = [process_attachment(a) for a in attachments]
     
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
@@ -198,56 +195,76 @@ async def get_ai_response(conversation: Dict) -> str:
     
     if provider == "openai":
         client = OpenAI(api_key=api_key)
-        formatted_messages = messages_to_openai(messages, processed_attachments)
+        formatted_messages = messages_to_openai(messages, attachments)
         
-        response = client.chat.completions.create(
-            model=model,
-            messages=formatted_messages,
-            max_tokens=2000
-        )
-        return response.choices[0].message.content
+        if model in OPENAI_MODELS:
+            response = client.chat.completions.create(
+                model=model,
+                messages=formatted_messages,
+                max_tokens=2000,
+                stream=stream
+            )
+            if stream:
+                async def response_generator():
+                    async for chunk in response:
+                        if chunk.choices[0].delta.content:
+                            yield chunk.choices[0].delta.content
+                return response_generator()
+            return response.choices[0].message.content
+        else:
+            text_only_messages = []
+            for msg in formatted_messages:
+                text_content = [c for c in msg["content"] if c["type"] == "text"]
+                text_only_messages.append({**msg, "content": text_content})
+            
+            response = client.chat.completions.create(
+                model=model,
+                messages=text_only_messages,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content
     
     elif provider == "anthropic":
         if model not in ANTHROPIC_MODELS:
             raise ValueError(f"Unsupported Anthropic model: {model}")
             
         client = anthropic.Anthropic(api_key=api_key)
-        anthropic_messages = messages_to_anthropic(messages, processed_attachments)
+        anthropic_messages = messages_to_anthropic(messages)
         
-        try:
-            # Add system message if agent instructions exist
-            if "agent_instructions" in conversation and conversation["agent_instructions"]:
-                system_message = {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": conversation["agent_instructions"]}]
-                }
-                anthropic_messages.insert(0, system_message)
-
-            response = client.messages.create(
-                model=model,
-                max_tokens=4096,
-                messages=anthropic_messages,
-                temperature=0.7,
-                system=conversation.get("agent_instructions", "You are a helpful AI assistant.")
-            )
-            return response.content[0].text
-        except (anthropic.APIStatusError, anthropic.APITimeoutError) as e:
-            if "overloaded" in str(e).lower():
-                time.sleep(2)
-            raise e
-        except Exception as e:
-            raise Exception(f"Anthropic API Error: {str(e)}")
+        response = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            messages=anthropic_messages,
+            temperature=0.7,
+            stream=stream
+        )
+        if stream:
+            async def response_generator():
+                async for chunk in response:
+                    if chunk.content[0].text:
+                        yield chunk.content[0].text
+            return response_generator()
+        return response.content[0].text
 
     elif provider == "gemini":
         if model not in GOOGLE_MODELS:
             raise ValueError(f"Unsupported Gemini model: {model}")
             
         genai.configure(api_key=api_key)
-        model_instance = genai.GenerativeModel(model)
-        gemini_messages = messages_to_gemini(messages, processed_attachments)
+        model_instance = genai.GenerativeModel(convert_model_name(model))
+        gemini_messages = messages_to_gemini(messages)
         
         chat = model_instance.start_chat(history=gemini_messages[:-1])
-        response = chat.send_message(gemini_messages[-1]["parts"])
+        response = chat.send_message(
+            gemini_messages[-1]["parts"],
+            stream=stream
+        )
+        if stream:
+            async def response_generator():
+                async for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+            return response_generator()
         return response.text
 
     elif provider == "deepseek":
