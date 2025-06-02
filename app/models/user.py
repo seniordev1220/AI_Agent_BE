@@ -17,3 +17,4 @@ class User(Base):
     messages = relationship("ChatMessage", back_populates="user")
     model_settings = relationship("ModelSettings", back_populates="user")
     data_sources = relationship("DataSource", back_populates="user")
+    vector_sources = relationship("VectorSource", back_populates="user")

@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     PERPLEXITY_API_KEY: str
+    ADMIN_DATABASE_URL: str
+    USER_DATABASE_URL_BASE: str
 
     class Config:
         env_file = ".env"

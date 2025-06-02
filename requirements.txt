@@ -32,3 +32,5 @@ aiohttp
 docx2txt
 transformers
 PyPDF2
+pgvector
+pypdf

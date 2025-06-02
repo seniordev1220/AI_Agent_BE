@@ -3,10 +3,10 @@ import os
 import uuid
 from datetime import datetime
 from ..models.data_source import DataSource
-from ..models.processed_data import ProcessedData
-from ..utils.langchain_loader import LangChainLoader
 from ..utils.file_handler import save_upload_file
 from sqlalchemy.orm import Session
+from ..services.vector_service import VectorService
+
 
 class FileUploadService:
     def __init__(self, db: Session):
@@ -24,22 +24,25 @@ class FileUploadService:
         # Save file
         await save_upload_file(file, file_path)
 
-        # Create data source record
-        data_source = DataSource(
-            user_id=user_id,
+        # Initialize vector service
+        vector_service = VectorService(user_id)
+
+        # Create connection settings
+        connection_settings = {
+            "file_path": file_path,
+            "original_filename": file.filename,
+            "content_type": file.content_type,
+            "file_size": os.path.getsize(file_path)
+        }
+
+        # Process file and create vector storage
+        data_source = await vector_service.create_vector_source(
             name=file.filename,
             source_type="file_upload",
-            connection_settings={
-                "file_path": file_path,
-                "original_filename": file.filename,
-                "content_type": file.content_type,
-                "file_size": os.path.getsize(file_path)
-            }
+            connection_settings=connection_settings,
+            embedding_model="openai",
+            db=self.db
         )
-        
-        self.db.add(data_source)
-        self.db.commit()
-        self.db.refresh(data_source)
 
         return data_source
 
