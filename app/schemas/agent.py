@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+from .vector_source import VectorSourceResponse
 
 # In app/schemas/agent.py
 class KnowledgeBaseItem(BaseModel):
@@ -22,15 +23,16 @@ class AgentBase(BaseModel):
     base_model: str
     category: Optional[str] = None
     reference_enabled: bool = False
+    vector_sources_ids: List[int] = []
     avatar_base64: Optional[str] = None
 
 class AgentCreate(AgentBase):
     avatar_url: Optional[str] = None
-    knowledge_base_ids: Optional[List[int]] = None  # Changed from List[str] to List[int]
+    vector_source_ids: Optional[List[int]] = None
 
 class AgentUpdate(AgentBase):
     avatar_url: Optional[str] = None
-    knowledge_base_ids: Optional[List[int]] = None  # Changed from List[str] to List[int]
+    vector_source_ids: Optional[List[int]] = None
 
 class AgentResponse(BaseModel):
     id: int
@@ -44,7 +46,7 @@ class AgentResponse(BaseModel):
     category: Optional[str] = None
     avatar_base64: Optional[str] = None
     reference_enabled: bool
-    knowledge_bases: List[KnowledgeBaseItem] = []
+    vector_sources: List[VectorSourceResponse] = []
     created_at: datetime
     updated_at: Optional[datetime] = None
 

@@ -1,7 +1,15 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text, DateTime, BigInteger
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text, DateTime, Table, ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..database import Base
+
+# Association table for Agent-VectorSource many-to-many relationship
+agent_vector_sources = Table(
+    'agent_vector_sources',
+    Base.metadata,
+    Column('agent_id', Integer, ForeignKey('agents.id')),
+    Column('vector_source_id', Integer, ForeignKey('vector_sources.id'))
+)
 
 class Agent(Base):
     __tablename__ = "agents"
@@ -17,25 +25,11 @@ class Agent(Base):
     category = Column(String, nullable=True)
     avatar_base64 = Column(String)
     reference_enabled = Column(Boolean, default=False)
+    vector_sources_ids = Column(ARRAY(Integer), default=[])
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    # Relationship
+    # Relationships
     user = relationship("User", back_populates="agents")
     messages = relationship("ChatMessage", back_populates="agent")
-    knowledge_bases = relationship("AgentKnowledgeBase", back_populates="agent")
-    
-class AgentKnowledgeBase(Base):
-    __tablename__ = "agent_knowledge_bases"
-
-    id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("agents.id"))
-    name = Column(String)  # File name
-    file_path = Column(String)  # Path to stored file
-    file_type = Column(String)  # MIME type
-    file_size = Column(BigInteger)  # Size in bytes
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Relationships
-    agent = relationship("Agent", back_populates="knowledge_bases") 
+    vector_sources = relationship("VectorSource", secondary=agent_vector_sources, backref="agents") 

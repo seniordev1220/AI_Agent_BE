@@ -21,8 +21,8 @@ class VectorSourceUpdate(BaseModel):
 class VectorSourceResponse(VectorSourceBase):
     id: int
     user_id: int
-    # created_at: datetime
-    # updated_at: datetime
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         from_attributes = True  # Allows ORM mode (previously called orm_mode)

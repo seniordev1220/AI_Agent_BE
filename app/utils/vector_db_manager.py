@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlalchemy import create_engine, text
 from typing import List, Dict, Any
+import json
 
 class VectorDBManager:
     def __init__(self, user_id: int):
@@ -26,6 +27,7 @@ class VectorDBManager:
 
     def create_user_database(self):
         # Create database using admin connection
+        print("Created Database")
         admin_conn = self._admin_connection()
         try:
             with admin_conn.cursor() as cur:
@@ -78,7 +80,7 @@ class VectorDBManager:
                 conn.rollback()
                 raise RuntimeError(f"Failed to create table: {str(e)}")
 
-    def store_vectors(self, source_name: str, vectors: List[Dict[str, Any]]):
+    async def store_vectors(self, source_name: str, vectors: List[Dict[str, Any]]):
         self.ensure_engine()
         safe_table_name = source_name.replace('"', '""')
         query = text(f'''
@@ -88,6 +90,8 @@ class VectorDBManager:
         
         with self.engine.begin() as conn:  # auto-commit transaction
             for vector in vectors:
+                if isinstance(vector["metadata"], dict):
+                    vector["metadata"] = json.dumps(vector["metadata"])
                 conn.execute(query, vector)
 
     def search_vectors(self, source_name: str, query_vector: List[float], limit: int = 5):

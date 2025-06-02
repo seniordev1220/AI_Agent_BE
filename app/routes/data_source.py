@@ -10,7 +10,8 @@ from ..schemas.data_source import (
     DataSourceUpdate,
     SourceType
 )
-from ..schemas.vector_source import VectorSourceResponse
+from ..models.vector_source import VectorSource
+from ..schemas.vector_source import VectorSourceResponse, VectorSourceCreate
 from ..utils.auth import get_current_user
 from ..utils.data_source_validator import validate_connection_settings
 # from ..services.ingestion_service import IngestionService
@@ -24,9 +25,9 @@ from ..services.vector_service import VectorService
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
-@router.post("/", response_model=DataSourceResponse)
+@router.post("/", response_model=VectorSourceResponse)
 async def create_data_source(
-    data_source: DataSourceCreate,
+    data_source: VectorSourceCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -35,7 +36,7 @@ async def create_data_source(
     
     try:
         # Create data source record
-        db_data_source = DataSource(
+        db_data_source = VectorSource(
             user_id=current_user.id,
             name=data_source.name,
             source_type=data_source.source_type,
@@ -63,12 +64,12 @@ async def create_data_source(
             detail=f"Error creating data source: {str(e)}"
         )
 
-@router.get("", response_model=List[DataSourceResponse])
+@router.get("", response_model=List[VectorSourceResponse])
 async def get_data_sources(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return db.query(DataSource).filter(DataSource.user_id == current_user.id).all()
+    return db.query(VectorSource).filter(VectorSource.user_id == current_user.id).all()
 
 @router.get("/{data_source_id}", response_model=DataSourceResponse)
 async def get_data_source(

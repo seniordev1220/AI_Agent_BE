@@ -7,7 +7,8 @@ import os
 from pydantic import ValidationError
 from ..database import get_db
 from ..models.user import User
-from ..models.agent import Agent, AgentKnowledgeBase
+from ..models.agent import Agent
+from ..models.vector_source import VectorSource
 from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse
 from ..utils.auth import get_current_user
 
@@ -43,24 +44,27 @@ async def create_agent(
             base_model=agent_data.base_model,
             category=agent_data.category,
             avatar_base64=avatar_base64,
-            reference_enabled=agent_data.reference_enabled
+            reference_enabled=agent_data.reference_enabled,
+            vector_sources_ids=agent_data.vector_source_ids if agent_data.vector_source_ids else []
         )
+        
+        # Add vector sources if provided
+        if agent_data.vector_source_ids:
+            vector_sources = db.query(VectorSource).filter(
+                VectorSource.id.in_(agent_data.vector_source_ids)
+            ).all()
+            db_agent.vector_sources.extend(vector_sources)
         
         db.add(db_agent)
         db.commit()
         db.refresh(db_agent)
         
-        # Create upload directory for knowledge bases
-        upload_dir = f"uploads/agent_{db_agent.id}/knowledge_bases"
-        os.makedirs(upload_dir, exist_ok=True)
-        
         return db_agent
         
     except Exception as e:
-        db.rollback()
         raise HTTPException(
-            status_code=400,
-            detail=f"Error creating agent: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
 @router.get("", response_model=List[AgentResponse])
@@ -77,7 +81,7 @@ async def get_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get specific agent"""
+    """Get an agent by ID"""
     agent = db.query(Agent).filter(
         Agent.id == agent_id,
         Agent.user_id == current_user.id
@@ -112,7 +116,7 @@ async def update_agent(
         
         # Update basic fields
         for field, value in agent_update.dict(exclude_unset=True).items():
-            if field != "knowledge_base_ids" and field != "avatar_url":
+            if field != "vector_source_ids" and field != "avatar_url":
                 setattr(db_agent, field, value)
         
         # Handle avatar update
@@ -120,31 +124,29 @@ async def update_agent(
             contents = await avatar.read()
             db_agent.avatar_base64 = base64.b64encode(contents).decode('utf-8')
         
-        # Update knowledge bases if provided
-        if agent_update.knowledge_base_ids is not None:
-            # Remove existing knowledge bases
-            db.query(AgentKnowledgeBase).filter(
-                AgentKnowledgeBase.agent_id == agent_id
-            ).delete()
+        # Update vector sources if provided
+        if agent_update.vector_source_ids is not None:
+            # Clear existing vector sources
+            db_agent.vector_sources = []
             
-            # Add new knowledge bases
-            for kb_id in agent_update.knowledge_base_ids:
-                kb = db.query(AgentKnowledgeBase).get(kb_id)
-                if kb:
-                    db_agent.knowledge_bases.append(kb)
+            # Add new vector sources
+            if agent_update.vector_source_ids:
+                vector_sources = db.query(VectorSource).filter(
+                    VectorSource.id.in_(agent_update.vector_source_ids)
+                ).all()
+                db_agent.vector_sources.extend(vector_sources)
         
         db.commit()
         db.refresh(db_agent)
         return db_agent
         
     except Exception as e:
-        db.rollback()
         raise HTTPException(
-            status_code=400,
-            detail=f"Error updating agent: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
-@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}")
 async def delete_agent(
     agent_id: int,
     current_user: User = Depends(get_current_user),
@@ -162,14 +164,14 @@ async def delete_agent(
     db.delete(agent)
     db.commit()
 
-@router.post("/{agent_id}/knowledge-bases", response_model=AgentResponse)
-async def upload_knowledge_base(
+@router.post("/{agent_id}/vector-sources", response_model=AgentResponse)
+async def add_vector_source(
     agent_id: int,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a file and create a knowledge base entry for an agent"""
+    """Upload a file and create a vector source entry for an agent"""
     
     try:
         # Get agent
@@ -182,7 +184,7 @@ async def upload_knowledge_base(
             raise HTTPException(status_code=404, detail="Agent not found")
             
         # Create upload directory
-        upload_dir = f"uploads/agent_{agent_id}/knowledge_bases"
+        upload_dir = f"uploads/user_{current_user.id}/vector_sources"
         os.makedirs(upload_dir, exist_ok=True)
         
         # Save file
@@ -191,16 +193,22 @@ async def upload_knowledge_base(
         with open(file_path, "wb") as f:
             f.write(contents)
             
-        # Create knowledge base entry
-        knowledge_base = AgentKnowledgeBase(
-            agent_id=agent_id,
+        # Create vector source entry
+        vector_source = VectorSource(
+            user_id=current_user.id,  # Associate with user instead of agent directly
             name=file.filename,
-            file_path=file_path,
-            file_type=file.content_type,
-            file_size=len(contents)
+            source_type="file",  # Add appropriate source type
+            connection_settings={"file_path": file_path},  # Store file path in connection settings
+            embedding_model="openai",  # Default embedding model
+            table_name=f"vector_{current_user.id}_{agent_id}_{file.filename.replace('.', '_').lower()}"
         )
         
-        db.add(knowledge_base)
+        db.add(vector_source)
+        db.flush()  # Get the ID without committing
+        
+        # Associate vector source with agent
+        agent.vector_sources.append(vector_source)
+        
         db.commit()
         db.refresh(agent)
         
@@ -211,6 +219,6 @@ async def upload_knowledge_base(
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(
-            status_code=400,
-            detail=f"Error uploading knowledge base: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )

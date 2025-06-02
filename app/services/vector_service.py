@@ -47,33 +47,47 @@ class VectorService:
         db.commit()
         db.refresh(vector_source)
 
-        self.process_data_source(vector_source, db)
+        # Start the processing in the background without waiting
+        await self.process_data_source(vector_source, db)
         return vector_source
 
     async def process_data_source(self, vector_source: VectorSource, db: Session):
-        self.vector_db.create_user_database()
-        loader = DataSourceLoader(
-            vector_source.source_type,
-            vector_source.connection_settings
-        )
-        documents = await loader.load_and_split()
-        embedding_manager = EmbeddingManager(
-            vector_source.embedding_model,
-            self._get_api_key(vector_source.embedding_model, db)
-        )
-        vectors = []
-        for doc in documents:
-            embedding = await embedding_manager.get_embedding(doc["content"])
-            vectors.append({
-                "content": doc["content"],
-                "metadata": doc["metadata"],
-                "embedding": embedding
-            })
-        self.vector_db.create_source_table(
-            vector_source.table_name,
-            len(vectors[0]["embedding"])
-        )
-        await self.vector_db.store_vectors(vector_source.table_name, vectors)
+        try:
+            # Synchronous operations
+            self.vector_db.create_user_database()
+            loader = DataSourceLoader(
+                vector_source.source_type,
+                vector_source.connection_settings
+            )
+            
+            # Asynchronous operations
+            documents = await loader.load_and_split()
+            embedding_manager = EmbeddingManager(
+                vector_source.embedding_model,
+                self._get_api_key(vector_source.embedding_model, db)
+            )
+            
+            vectors = []
+            for doc in documents:
+                embedding = await embedding_manager.get_embedding(doc["content"])
+                vectors.append({
+                    "content": doc["content"],
+                    "metadata": doc["metadata"],
+                    "embedding": embedding
+                })
+            
+            # Synchronous operation
+            self.vector_db.create_source_table(
+                vector_source.table_name,
+                len(vectors[0]["embedding"])
+            )
+            
+            # Asynchronous operation
+            await self.vector_db.store_vectors(vector_source.table_name, vectors)
+        except Exception as e:
+            # Log the error or handle it appropriately
+            print(f"Error processing data source: {str(e)}")
+            raise
 
     def _get_api_key(self, model_name: str, db: Session) -> str:
         api_key = db.query(APIKey).filter(
