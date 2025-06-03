@@ -32,7 +32,7 @@ async def create_agent(
         if avatar:
             contents = await avatar.read()
             avatar_base64 = base64.b64encode(contents).decode('utf-8')
-        
+        print(agent_data.vector_source_ids)
         # Create agent
         db_agent = Agent(
             user_id=current_user.id,
@@ -99,51 +99,106 @@ async def update_agent(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update an agent"""
+    """Update an agent
+    
+    Args:
+        agent_id: The ID of the agent to update
+        agent_data: JSON string containing agent update data
+        avatar: Optional new avatar file
+        current_user: The authenticated user
+        db: Database session
+        
+    Returns:
+        Updated agent object
+        
+    Raises:
+        HTTPException: If agent not found or validation fails
+    """
     try:
-        # Get existing agent
-        db_agent = db.query(Agent).filter(
+        # Get existing agent with vector sources loaded
+        db_agent = db.query(Agent).options(
+            joinedload(Agent.vector_sources)
+        ).filter(
             Agent.id == agent_id,
             Agent.user_id == current_user.id
         ).first()
         
         if not db_agent:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Agent not found"
+            )
             
-        # Parse update data
-        agent_dict = json.loads(agent_data)
-        agent_update = AgentUpdate(**agent_dict)
+        # Parse and validate update data
+        try:
+            agent_dict = json.loads(agent_data)
+            agent_update = AgentUpdate(**agent_dict)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON in agent_data"
+            )
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(e)
+            )
         
         # Update basic fields
-        for field, value in agent_update.dict(exclude_unset=True).items():
-            if field != "vector_source_ids" and field != "avatar_url":
+        update_data = agent_update.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            if field not in ["vector_source_ids", "avatar_url", "vector_sources_ids"]:
                 setattr(db_agent, field, value)
         
         # Handle avatar update
         if avatar:
-            contents = await avatar.read()
-            db_agent.avatar_base64 = base64.b64encode(contents).decode('utf-8')
+            try:
+                contents = await avatar.read()
+                db_agent.avatar_base64 = base64.b64encode(contents).decode('utf-8')
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Failed to process avatar: {str(e)}"
+                )
         
         # Update vector sources if provided
         if agent_update.vector_source_ids is not None:
-            # Clear existing vector sources
-            db_agent.vector_sources = []
-            
-            # Add new vector sources
+            # Verify all vector sources exist and belong to user
             if agent_update.vector_source_ids:
                 vector_sources = db.query(VectorSource).filter(
-                    VectorSource.id.in_(agent_update.vector_source_ids)
+                    VectorSource.id.in_(agent_update.vector_source_ids),
+                    VectorSource.user_id == current_user.id
                 ).all()
-                db_agent.vector_sources.extend(vector_sources)
+                
+                if len(vector_sources) != len(agent_update.vector_source_ids):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="One or more vector sources not found or not accessible"
+                    )
+                
+                # Clear and update vector sources
+                db_agent.vector_sources = vector_sources
+            else:
+                # Clear vector sources if empty list provided
+                db_agent.vector_sources = []
         
-        db.commit()
-        db.refresh(db_agent)
-        return db_agent
-        
+        try:
+            db.commit()
+            db.refresh(db_agent)
+            return db_agent
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update agent: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Unexpected error: {str(e)}"
         )
 
 @router.delete("/{agent_id}")

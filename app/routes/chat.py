@@ -8,9 +8,11 @@ from ..models.chat import ChatMessage
 from ..models.agent import Agent
 from ..models.model_settings import ModelSettings
 from ..models.api_key import APIKey
+from ..models.vector_source import VectorSource
 from ..schemas.chat import ChatMessageCreate, ChatMessageResponse, ChatHistoryResponse
 from ..utils.auth import get_current_user
-from ..utils.ai_client import get_ai_response
+from ..utils.ai_client import get_ai_response_from_model, get_ai_response_from_vectorstore
+from ..services.vector_service import VectorService
 import os
 import uuid
 import shutil
@@ -139,23 +141,63 @@ async def create_message(
             "content": content
         })
         
-        # Prepare conversation context
-        conversation = {
-            "messages": formatted_messages,
-            "agent_instructions": agent.instructions,
-            "model": model,
-            "provider": model_setting.provider,
-            "api_key": api_key.api_key,
-            "attachments": file_attachments
-        }
+        # Initialize VectorService and search similar content
+        vector_service = VectorService(current_user.id)
+        
+        # Prepare the final response content
+        response_content = ""
+        
+        # Only search through vector sources if they exist
+        if agent.vector_sources_ids:
+            # Search through all vector sources associated with the agent
+            similar_results = []
+            for vector_source in agent.vector_sources_ids:
+                vector_table = db.query(VectorSource).filter(
+                    VectorSource.user_id == current_user.id,
+                    VectorSource.id == vector_source,
+                ).first()
+                results = await vector_service.search_similar(
+                    query=content,
+                    source_name=vector_table.table_name,
+                    embedding_model=vector_table.embedding_model,
+                    api_key=api_key.api_key
+                )
+                similar_results.extend(results)
 
-        # Get AI response
-        ai_response = await get_ai_response(conversation)
+            # Format the response with similar content if results found
+            if similar_results:
+                message_from_vector = ""
+                for result in similar_results:
+                    message_from_vector += f"- {result['content']}\n"
+            
+                    conversation = {
+                        "messages": message_from_vector,
+                        "agent_instructions": agent.instructions,
+                        "model": model,
+                        "provider": model_setting.provider,
+                        "api_key": api_key.api_key,
+                        "attachments": file_attachments,
+                        "query": content
+                    }
+                    response_content = await get_ai_response_from_vectorstore(conversation)
+        
+        # If no vector sources or no similar results, get direct AI response
+        if not response_content:
+            conversation = {
+                "messages": formatted_messages,
+                "agent_instructions": agent.instructions,
+                "model": model,
+                "provider": model_setting.provider,
+                "api_key": api_key.api_key,
+                "attachments": file_attachments
+            }
+            response_content = await get_ai_response_from_model(conversation)
+
         ai_message = ChatMessage(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
-            content=ai_response,
+            content=response_content,
             model=model
         )
         db.add(ai_message)

@@ -1,8 +1,6 @@
 from typing import Dict, List, Any, Union, AsyncGenerator
-import openai
 import anthropic
 from google.generativeai import GenerativeModel
-import os
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
@@ -11,6 +9,10 @@ import google.generativeai as genai
 from PyPDF2 import PdfReader
 from io import BytesIO
 import tempfile
+from langchain.prompts import ChatPromptTemplate
+from langchain_community.chat_models import ChatOpenAI
+from langchain.callbacks import StreamingStdOutCallbackHandler
+from langchain.callbacks.base import BaseCallbackHandler
 
 # Define supported models
 ANTHROPIC_MODELS = [
@@ -178,7 +180,77 @@ def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
         
     return anthropic_messages
 
-async def get_ai_response(conversation: Dict) -> str:
+def generate_system_prompt(agent_instructions: str, agent_category: str) -> str:
+    """
+    Generate a system prompt based on agent's instructions and category
+    """
+    base_prompt = "You are an AI assistant"
+    
+    if agent_category:
+        base_prompt += f" specialized in {agent_category}"
+    
+    if agent_instructions:
+        base_prompt += f". {agent_instructions}"
+    else:
+        base_prompt += ". Your goal is to help users by providing accurate and helpful responses."
+    
+    return base_prompt
+
+class ChunkCollectorCallbackHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.chunks = []
+        
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        self.chunks.append(token)
+        
+    def get_collected_tokens(self) -> str:
+        return "".join(self.chunks)
+
+async def get_ai_response_from_vectorstore(conversation: Dict) -> str:
+        agent_instructions = conversation.get("agent_instructions", "")
+        agent_category=conversation.get("agent_category", "")
+        provider = conversation["provider"]
+        api_key = conversation["api_key"]
+        model = convert_model_name(conversation["model"])
+        messages = conversation["messages"]
+        query = conversation["query"]
+
+        system_prompt = generate_system_prompt(agent_instructions=agent_instructions, agent_category=agent_category) 
+
+        prompt = ChatPromptTemplate.from_template(
+            """Based on the following context and system instructions, please answer the question.
+            
+            System Instructions: {system_prompt}
+            
+            Context: {context}
+            
+            Question: {question}
+            
+            Answer:"""
+        )
+
+        if provider == "openai":
+            callback_handler = ChunkCollectorCallbackHandler()
+            
+            system_model = ChatOpenAI(
+                api_key=api_key,
+                model=model,
+                streaming=True,
+                callbacks=[callback_handler],
+            )
+            
+            chain = prompt | system_model
+            await chain.ainvoke({
+                "system_prompt": system_prompt,
+                "context": messages,
+                "question": query
+            })
+            
+            return callback_handler.get_collected_tokens()
+        
+        raise ValueError(f"Unsupported provider for vector store: {provider}")
+
+async def get_ai_response_from_model(conversation: Dict) -> str:
     """
     Get response from AI model based on provider
     """
@@ -186,9 +258,20 @@ async def get_ai_response(conversation: Dict) -> str:
     api_key = conversation["api_key"]
     messages = conversation["messages"]
     attachments = conversation.get("attachments", [])
+    agent_instructions = conversation.get("agent_instructions", "")
     
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
+    
+    # Generate system prompt
+    system_prompt = generate_system_prompt(
+        agent_instructions=agent_instructions,
+        agent_category=conversation.get("agent_category", "")
+    )
+    
+    # Add system message at the beginning if not present
+    if not messages or messages[0]["role"] != "system":
+        messages.insert(0, {"role": "system", "content": system_prompt})
     
     model = convert_model_name(conversation["model"])
     
@@ -270,4 +353,4 @@ async def get_ai_response(conversation: Dict) -> str:
             raise Exception(f"Hugging Face API Error: {error_msg}")
 
     else:
-        raise ValueError(f"Unsupported provider: {provider}") 
+        raise ValueError(f"Unsupported provider: {provider}")
