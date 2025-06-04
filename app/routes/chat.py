@@ -79,10 +79,15 @@ async def create_message(
         APIKey.provider == model_setting.provider,
         APIKey.is_valid == True
     ).first()
+    openai_api_key = db.query(APIKey).filter(
+        APIKey.user_id == current_user.id,
+        APIKey.provider == "openai",
+        APIKey.is_valid == True
+    ).first()
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"No valid API key found for {model_setting.provider}"
+            detail=f"No valid API key found for OpenAI"
         )
     # Save user message
     user_message = ChatMessage(
@@ -149,6 +154,7 @@ async def create_message(
         
         # Only search through vector sources if they exist
         if agent.vector_sources_ids:
+            
             # Search through all vector sources associated with the agent
             similar_results = []
             for vector_source in agent.vector_sources_ids:
@@ -160,11 +166,11 @@ async def create_message(
                     query=content,
                     source_name=vector_table.table_name,
                     embedding_model=vector_table.embedding_model,
-                    api_key=api_key.api_key
+                    api_key=openai_api_key.api_key
                 )
                 similar_results.extend(results)
-
             # Format the response with similar content if results found
+            print(similar_results)
             if similar_results:
                 message_from_vector = ""
                 for result in similar_results:
