@@ -7,11 +7,11 @@ class VectorSourceBase(BaseModel):
     name: str
     source_type: str  # Could make this an Enum like your SourceType if desired
     connection_settings: Dict[str, Any]
-    embedding_model: str
-    table_name: str
 
-class VectorSourceCreate(VectorSourceBase):
-    user_id: int
+class VectorSourceCreate(BaseModel):
+    name: str
+    source_type: str
+    connection_settings: Dict[str, Any]
 
 class VectorSourceUpdate(BaseModel):
     name: Optional[str] = None
@@ -21,8 +21,10 @@ class VectorSourceUpdate(BaseModel):
 class VectorSourceResponse(VectorSourceBase):
     id: int
     user_id: int
-    created_at: datetime
-    updated_at: datetime
+    embedding_model: str
+    table_name: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True  # Allows ORM mode (previously called orm_mode)

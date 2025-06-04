@@ -35,25 +35,42 @@ async def create_data_source(
     vector_service = VectorService(current_user.id)
     
     try:
-        # Create data source record
-        db_data_source = VectorSource(
-            user_id=current_user.id,
-            name=data_source.name,
-            source_type=data_source.source_type,
-            connection_settings=data_source.connection_settings
+        # Convert file extensions to comma-separated string if it's a list
+        connection_settings = dict(data_source.connection_settings)
+        if "file_filter" in connection_settings:
+            if isinstance(connection_settings["file_filter"], list):
+                # Filter out None values and ensure all items are strings
+                valid_extensions = [str(ext) for ext in connection_settings["file_filter"] if ext is not None]
+                connection_settings["file_filter"] = ",".join(valid_extensions)
+            elif connection_settings["file_filter"] is None:
+                # Set a default value if file_filter is None
+                connection_settings["file_filter"] = ""
+            else:
+                # Ensure single extension is a string
+                connection_settings["file_filter"] = str(connection_settings["file_filter"])
+
+        # Calculate size before creating the vector source
+        size_tracking_service = SizeTrackingService(db)
+        size_info = await size_tracking_service.calculate_initial_size(
+            data_source.source_type,
+            connection_settings
         )
-        db.add(db_data_source)
-        db.commit()
-        db.refresh(db_data_source)
+        
+        # Add size information to connection settings
+        connection_settings["file_size"] = size_info.get("raw_size_bytes", 0)
+        connection_settings["document_count"] = size_info.get("document_count", 0)
 
         # Process data source and create vector storage
-        await vector_service.create_vector_source(
+        db_data_source = await vector_service.create_vector_source(
             name=data_source.name,
             source_type=data_source.source_type,
-            connection_settings=data_source.connection_settings,
+            connection_settings=connection_settings,
             embedding_model="openai",  # Default to OpenAI
             db=db
         )
+
+        # Track size of the data source
+        await size_tracking_service.track_source_size(db_data_source.id)
 
         return db_data_source
         
@@ -153,75 +170,6 @@ async def delete_data_source(
             detail=f"Error deleting data source: {str(e)}"
         )
 
-# @router.post("/{data_source_id}/process", response_model=DataSourceResponse)
-# async def process_data_source(
-#     data_source_id: int,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     data_source = db.query(DataSource).filter(
-#         DataSource.id == data_source_id,
-#         DataSource.user_id == current_user.id
-#     ).first()
-    
-#     if not data_source:
-#         raise HTTPException(status_code=404, detail="Data source not found")
-
-#     ingestion_service = IngestionService(db)
-#     try:
-#         processed_source = await ingestion_service.process_data_source(data_source)
-#         return processed_source
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
-
-# @router.get("/{data_source_id}/processing-history", response_model=List[ProcessedDataResponse])
-# async def get_processing_history(
-#     data_source_id: int,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     # Verify data source belongs to user
-#     data_source = db.query(DataSource).filter(
-#         DataSource.id == data_source_id,
-#         DataSource.user_id == current_user.id
-#     ).first()
-    
-#     if not data_source:
-#         raise HTTPException(status_code=404, detail="Data source not found")
-
-#     # Get processing history
-#     processing_history = db.query(ProcessedData).filter(
-#         ProcessedData.data_source_id == data_source_id
-#     ).order_by(ProcessedData.created_at.desc()).all()
-    
-#     return processing_history
-
-# @router.get("/{data_source_id}/latest-processing", response_model=ProcessedDataResponse)
-# async def get_latest_processing(
-#     data_source_id: int,
-#     current_user: User = Depends(get_current_user),
-#     db: Session = Depends(get_db)
-# ):
-#     # Verify data source belongs to user
-#     data_source = db.query(DataSource).filter(
-#         DataSource.id == data_source_id,
-#         DataSource.user_id == current_user.id
-#     ).first()
-    
-#     if not data_source:
-#         raise HTTPException(status_code=404, detail="Data source not found")
-
-#     # Get latest active processing record
-#     latest_processing = db.query(ProcessedData).filter(
-#         ProcessedData.data_source_id == data_source_id,
-#         ProcessedData.is_active == True
-#     ).order_by(ProcessedData.last_processed.desc()).first()
-    
-#     if not latest_processing:
-#         raise HTTPException(status_code=404, detail="No processing history found")
-    
-#     return latest_processing
-
 @router.post("/upload", response_model=VectorSourceResponse)
 async def upload_file(
     file: UploadFile = File(...),
@@ -241,45 +189,6 @@ async def upload_file(
             detail=f"Error uploading file: {str(e)}"
         )
 
-@router.delete("/upload/{data_source_id}")
-async def delete_uploaded_file(
-    data_source_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    data_source = db.query(DataSource).filter(
-        DataSource.id == data_source_id,
-        DataSource.user_id == current_user.id,
-        DataSource.source_type == "file_upload"
-    ).first()
-    
-    if not data_source:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
-
-    # Delete physical file
-    file_path = data_source.connection_settings.get("file_path")
-    if file_path and os.path.exists(file_path):
-        os.remove(file_path)
-
-    # Delete processed data
-    processed_data = db.query(ProcessedData).filter(
-        ProcessedData.data_source_id == data_source_id
-    ).all()
-    for pd in processed_data:
-        db.delete(pd)
-
-    # Delete data source
-    db.delete(data_source)
-    db.commit()
-
-    return {"message": "File and associated data deleted successfully"}
-
-@router.get("/upload/supported-types")
-async def get_supported_file_types():
-    file_handler = FileHandler()
-    return {
-        "supported_extensions": file_handler.get_supported_extensions()
-    }
 
 @router.post("/{data_source_id}/connection-test", response_model=DataSourceResponse)
 async def test_data_source_connection(

@@ -27,7 +27,6 @@ class VectorDBManager:
 
     def create_user_database(self) -> None:
         """Create a new database for the user with vector extension enabled"""
-        print(f"Creating database {self.db_name}")
         admin_conn = self._admin_connection()
         try:
             with admin_conn.cursor() as cur:

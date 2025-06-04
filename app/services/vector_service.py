@@ -5,7 +5,8 @@ from ..models.vector_source import VectorSource
 from ..models.api_key import APIKey
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
-import uuid  # <-- Add this import
+from datetime import datetime
+import uuid
 
 class VectorService:
     def __init__(self, user_id: int):
@@ -47,8 +48,17 @@ class VectorService:
         db.commit()
         db.refresh(vector_source)
 
-        # Start the processing in the background without waiting
-        await self.process_data_source(vector_source, db)
+        try:
+            # Process the data source
+            await self.process_data_source(vector_source, db)
+            # Update the timestamp after successful processing
+            vector_source.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(vector_source)
+        except Exception as e:
+            print(f"Warning: Processing failed: {str(e)}")
+            raise
+            
         return vector_source
 
     async def process_data_source(self, vector_source: VectorSource, db: Session):

@@ -6,11 +6,32 @@ from ..models.data_source import DataSource
 from ..schemas.data_source import SourceType
 
 class SizeTrackingService:
+    def __init__(self, db):
+        self.db = db
+
     @staticmethod
     async def calculate_initial_size(source_type: str, settings: Dict[str, Any]) -> Dict[str, int]:
         """Calculate initial size for different data source types"""
         calculator = SizeCalculatorFactory.get_calculator(source_type)
         return await calculator.calculate_size(settings)
+
+    async def track_source_size(self, source_id: int) -> None:
+        """Track the size of a data source"""
+        # Get the data source from database
+        data_source = self.db.query(DataSource).filter(DataSource.id == source_id).first()
+        if not data_source:
+            return
+
+        # Calculate size using appropriate calculator
+        size_info = await self.calculate_initial_size(
+            data_source.source_type,
+            data_source.connection_settings
+        )
+
+        # Update data source with size information
+        data_source.raw_size_bytes = size_info.get("raw_size_bytes", 0)
+        data_source.document_count = size_info.get("document_count", 0)
+        self.db.commit()
 
 class SizeCalculatorFactory:
     @staticmethod
@@ -50,7 +71,7 @@ class FileUploadSizeCalculator(BaseSizeCalculator):
 class GitHubSizeCalculator(BaseSizeCalculator):
     async def calculate_size(self, settings: Dict[str, Any]) -> Dict[str, int]:
         try:
-            repo = settings.get("repository")
+            repo = settings.get("repo")
             token = settings.get("access_token")
             if not repo or not token:
                 return await super().calculate_size(settings)
