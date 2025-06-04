@@ -16,7 +16,8 @@ from langchain.callbacks.base import BaseCallbackHandler
 
 # Define supported models
 ANTHROPIC_MODELS = [
-    "claude-3-5-sonnet-20240620"
+    "claude-3-5-sonnet-20240620",
+    "claude-3-7-sonnet-20240620"
 ]
 
 GOOGLE_MODELS = [
@@ -147,12 +148,18 @@ def messages_to_gemini(messages: List[Dict]) -> List[Dict]:
         
     return gemini_messages
 
-def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
-    """Convert messages to Anthropic format"""
+def messages_to_anthropic(messages: List[Dict]) -> Dict:
+    """Convert messages to Anthropic format and extract system message"""
     anthropic_messages = []
+    system_message = None
     prev_role = None
     
     for message in messages:
+        # Extract system message
+        if message["role"] == "system":
+            system_message = message["content"]
+            continue
+            
         if prev_role and (prev_role == message["role"]):
             anthropic_message = anthropic_messages[-1]
         else:
@@ -178,7 +185,10 @@ def messages_to_anthropic(messages: List[Dict]) -> List[Dict]:
 
         prev_role = message["role"]
         
-    return anthropic_messages
+    return {
+        "messages": anthropic_messages,
+        "system": system_message
+    }
 
 def generate_system_prompt(agent_instructions: str, agent_category: str) -> str:
     """
@@ -303,13 +313,14 @@ async def get_ai_response_from_model(conversation: Dict) -> str:
         if model not in ANTHROPIC_MODELS:
             raise ValueError(f"Unsupported Anthropic model: {model}")
             
-        client = anthropic.Anthropic(api_key=api_key)
-        anthropic_messages = messages_to_anthropic(messages)
+        client = anthropic.Client(api_key=api_key)
+        formatted_data = messages_to_anthropic(messages)
         
         response = client.messages.create(
             model=model,
             max_tokens=1024,
-            messages=anthropic_messages,
+            messages=formatted_data["messages"],
+            system=formatted_data["system"],
             temperature=0.7
         )
         return response.content[0].text
