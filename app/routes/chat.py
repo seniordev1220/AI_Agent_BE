@@ -170,7 +170,6 @@ async def create_message(
                 )
                 similar_results.extend(results)
             # Format the response with similar content if results found
-            print(similar_results)
             if similar_results:
                 message_from_vector = ""
                 for result in similar_results:
