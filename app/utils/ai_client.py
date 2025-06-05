@@ -250,87 +250,38 @@ class ChunkCollectorCallbackHandler(BaseCallbackHandler):
         return "".join(self.chunks)
 
 async def get_ai_response_from_vectorstore(conversation: Dict) -> str:
-        agent_instructions = conversation.get("agent_instructions", "")
-        agent_category = conversation.get("agent_category", "")
-        provider = conversation["provider"]
-        api_key = conversation["api_key"]
-        model = convert_model_name(conversation["model"])
-        messages = conversation["messages"]
-        query = conversation["query"]
-
-        system_prompt = generate_system_prompt(agent_instructions=agent_instructions, agent_category=agent_category) 
-
-        prompt = ChatPromptTemplate.from_template(
-            """Based on the following context and system instructions, please answer the question.
-            
-            System Instructions: {system_prompt}
-            
-            Context: {context}
-            
-            Question: {question}
-            
-            Answer:"""
-        )
-
-        if provider == "openai":
-            callback_handler = ChunkCollectorCallbackHandler()
-            
-            system_model = ChatOpenAI(
-                api_key=api_key,
-                model=model,
-                streaming=True,
-                callbacks=[callback_handler],
-            )
-            
-            chain = prompt | system_model
-            await chain.ainvoke({
-                "system_prompt": system_prompt,
-                "context": messages,
-                "question": query
-            })
-            
-            return callback_handler.get_collected_tokens()
-            
-        elif provider == "anthropic":
-            if model not in ANTHROPIC_MODELS:
-                raise ValueError(f"Unsupported Anthropic model: {model}")
-            client = anthropic.Client(api_key=api_key)
-            
-            # Format the prompt with the template and convert to string
-            formatted_prompt = prompt.format(
-                system_prompt=system_prompt,
-                context=messages,
-                question=query
-            )
-            # Create message with the formatted prompt
-            response = client.messages.create(
-                model=model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": formatted_prompt}],
-                system=system_prompt
-            )
-            return response.content[0].text
-            
-        elif provider == "gemini":
-            if model not in GOOGLE_MODELS:
-                raise ValueError(f"Unsupported Gemini model: {model}")
-                
-            genai.configure(api_key=api_key)
-            model_instance = genai.GenerativeModel(model)
-            
-            # Format the prompt with the template and convert to string
-            formatted_prompt = prompt.format(
-                system_prompt=system_prompt,
-                context=messages,
-                question=query
-            )
-            
-            # Create chat and send message
-            chat = model_instance.start_chat(history=[])
-            response = chat.send_message(formatted_prompt)
-            return response.text
-        
-        raise ValueError(f"Unsupported provider for vector store: {provider}")
+    """Get AI response with context from vector store"""
+    messages = conversation["messages"]
+    agent_instructions = conversation.get("agent_instructions", "")
+    references = conversation.get("references", [])
+    
+    # Create a system message that includes instructions for handling references
+    system_prompt = f"""
+    {agent_instructions}
+    
+    When using information from referenced sources, please:
+    1. Cite the source in your response using [Source Name] format
+    2. Only use information that is directly relevant to the query
+    3. Maintain accuracy and context of the referenced information
+    4. Synthesize information from multiple sources when appropriate
+    """
+    
+    # Format the conversation with references
+    formatted_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Query: {conversation['query']}\n\nRelevant Context:\n{messages}"}
+    ]
+    
+    # Get response using the appropriate model
+    response = await get_ai_response_from_model({
+        "messages": formatted_messages,
+        "model": conversation["model"],
+        "provider": conversation["provider"],
+        "api_key": conversation["api_key"],
+        "attachments": conversation.get("attachments", [])
+    })
+    
+    return response
 
 async def get_ai_response_from_model(conversation: Dict) -> str:
     """

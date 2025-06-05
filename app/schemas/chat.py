@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from enum import Enum
 
 class FileType(str, Enum):
@@ -9,6 +9,11 @@ class FileType(str, Enum):
     TEXT = "text"
     CSV = "csv"
     DOCX = "docx"
+
+class FileReference(BaseModel):
+    source_name: str
+    content: str
+    relevance_score: float
 
 class Attachment(BaseModel):
     name: str
@@ -20,6 +25,7 @@ class ChatMessageBase(BaseModel):
     content: str
     model: str
     attachments: Optional[List[Attachment]] = Field(default_factory=list)
+    references: Optional[List[FileReference]] = Field(default_factory=list)
 
 class ChatMessageCreate(ChatMessageBase):
     pass
@@ -43,6 +49,7 @@ class ChatMessageResponse(BaseModel):
     model: str
     created_at: datetime
     attachments: List[FileAttachmentResponse] = []
+    references: List[FileReference] = []
 
     class Config:
         from_attributes = True

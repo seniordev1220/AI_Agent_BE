@@ -62,6 +62,12 @@ async def create_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Agent not found"
         )
+
+    # Get all available vector sources for the user
+    available_sources = db.query(VectorSource).filter(
+        VectorSource.user_id == current_user.id
+    ).all()
+
     # Check if requested model is enabled
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
@@ -89,6 +95,7 @@ async def create_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"No valid API key found for OpenAI"
         )
+
     # Save user message
     user_message = ChatMessage(
         agent_id=agent_id,
@@ -149,44 +156,66 @@ async def create_message(
         # Initialize VectorService and search similar content
         vector_service = VectorService(current_user.id)
         
-        # Prepare the final response content
+        # Prepare the final response content and references
         response_content = ""
-        
-        # Only search through vector sources if they exist
-        if agent.vector_sources_ids:
-            
-            # Search through all vector sources associated with the agent
-            similar_results = []
-            for vector_source in agent.vector_sources_ids:
-                vector_table = db.query(VectorSource).filter(
-                    VectorSource.user_id == current_user.id,
-                    VectorSource.id == vector_source,
-                ).first()
+        references = []
+        similar_results = []
+
+        # Search through ALL available vector sources
+        for vector_source in available_sources:
+            try:
                 results = await vector_service.search_similar(
                     query=content,
-                    source_name=vector_table.table_name,
-                    embedding_model=vector_table.embedding_model,
+                    source_name=vector_source.table_name,
+                    embedding_model=vector_source.embedding_model,
                     api_key=openai_api_key.api_key
                 )
+                # Add source information to results
+                for result in results:
+                    result['source_name'] = vector_source.name
+                    # Add connection status to the result
+                    result['is_connected'] = vector_source.id in (agent.vector_sources_ids or [])
                 similar_results.extend(results)
-            # Format the response with similar content if results found
-            if similar_results:
-                message_from_vector = ""
-                for result in similar_results:
-                    message_from_vector += f"- {result['content']}\n"
+            except Exception as e:
+                print(f"Error searching vector source {vector_source.name}: {str(e)}")
+                continue
+
+        # Format the response with similar content if results found
+        if similar_results:
+            # Sort results by relevance score
+            similar_results.sort(key=lambda x: x.get('score', 0), reverse=True)
             
-                    conversation = {
-                        "messages": message_from_vector,
-                        "agent_instructions": agent.instructions,
-                        "model": model,
-                        "provider": model_setting.provider,
-                        "api_key": api_key.api_key,
-                        "attachments": file_attachments,
-                        "query": content
-                    }
-                    response_content = await get_ai_response_from_vectorstore(conversation)
+            message_from_vector = ""
+            for result in similar_results:
+                # Include connection status in the source reference
+                connection_status = "" if result['is_connected'] else " (not connected)"
+                message_from_vector += f"[From {result['source_name']}{connection_status}]: {result['content']}\n"
+                # Store reference
+                references.append({
+                    "source_name": result['source_name'],
+                    "content": result['content'],
+                    "relevance_score": result.get('score', 0.0),
+                    "is_connected": result['is_connected']
+                })
+            
+            conversation = {
+                "messages": message_from_vector,
+                "agent_instructions": agent.instructions,
+                "model": model,
+                "provider": model_setting.provider,
+                "api_key": api_key.api_key,
+                "attachments": file_attachments,
+                "query": content,
+                "references": references
+            }
+            response_content = await get_ai_response_from_vectorstore(conversation)
+            
+            # Add a note about unconnected sources if any were used
+            unconnected_sources = {ref["source_name"] for ref in references if not ref["is_connected"]}
+            if unconnected_sources:
+                response_content += f"\n\nNote: Some of this information came from sources that aren't connected to me yet: {', '.join(unconnected_sources)}. You may want to connect them for better context in future conversations."
         
-        # If no vector sources or no similar results, get direct AI response
+        # If no results found in vector search
         if not response_content:
             conversation = {
                 "messages": formatted_messages,
@@ -203,7 +232,8 @@ async def create_message(
             user_id=current_user.id,
             role="assistant",
             content=response_content,
-            model=model
+            model=model,
+            references=references
         )
         db.add(ai_message)
         db.commit()

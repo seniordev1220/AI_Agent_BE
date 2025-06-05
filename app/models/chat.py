@@ -15,6 +15,7 @@ class ChatMessage(Base):
     model = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    references = Column(JSON, default=list)  # Store file references from knowledge base
 
     agent = relationship("Agent", back_populates="messages")
     user = relationship("User", back_populates="messages")
