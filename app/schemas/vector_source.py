@@ -23,6 +23,7 @@ class VectorSourceResponse(VectorSourceBase):
     user_id: int
     embedding_model: str
     table_name: str
+    is_converted: bool
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

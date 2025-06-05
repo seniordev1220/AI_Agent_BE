@@ -190,15 +190,15 @@ async def upload_file(
         )
 
 
-@router.post("/{data_source_id}/connection-test", response_model=DataSourceResponse)
+@router.post("/{data_source_id}/connection-test", response_model=VectorSourceResponse)
 async def test_data_source_connection(
     data_source_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    data_source = db.query(DataSource).filter(
-        DataSource.id == data_source_id,
-        DataSource.user_id == current_user.id
+    data_source = db.query(VectorSource).filter(
+        VectorSource.id == data_source_id,
+        VectorSource.user_id == current_user.id
     ).first()
     
     if not data_source:
@@ -206,7 +206,7 @@ async def test_data_source_connection(
 
     try:
         # Toggle is_connected status
-        data_source.is_connected = not data_source.is_connected
+        data_source.is_converted = not data_source.is_converted
         db.commit()
         db.refresh(data_source)
         

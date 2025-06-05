@@ -42,7 +42,8 @@ class VectorService:
             source_type=source_type,
             connection_settings=connection_settings,
             embedding_model=embedding_model,
-            table_name=table_name
+            table_name=table_name,
+            is_converted=False  # Initially set to false
         )
         db.add(vector_source)
         db.commit()
@@ -51,8 +52,9 @@ class VectorService:
         try:
             # Process the data source
             await self.process_data_source(vector_source, db)
-            # Update the timestamp after successful processing
+            # Update the timestamp and conversion flag after successful processing
             vector_source.updated_at = datetime.utcnow()
+            vector_source.is_converted = True
             db.commit()
             db.refresh(vector_source)
         except Exception as e:
