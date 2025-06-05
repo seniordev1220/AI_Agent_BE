@@ -19,8 +19,8 @@ class ChatMessage(Base):
 
     agent = relationship("Agent", back_populates="messages")
     user = relationship("User", back_populates="messages")
-
     attachments = relationship("FileAttachment", back_populates="message")
+    file_outputs = relationship("FileOutput", back_populates="message")
 
 class FileAttachment(Base):
     __tablename__ = "file_attachments"
@@ -28,8 +28,21 @@ class FileAttachment(Base):
     id = Column(Integer, primary_key=True, index=True)
     message_id = Column(Integer, ForeignKey("chat_messages.id"))
     name = Column(String)
-    type = Column(String)
-    url = Column(String)
-    size = Column(Integer)
+    type = Column(String)  # File extension/type
+    url = Column(String)  # File path or URL
+    size = Column(Integer)  # File size in bytes
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     message = relationship("ChatMessage", back_populates="attachments")
+
+class FileOutput(Base):
+    __tablename__ = "file_outputs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id"))
+    name = Column(String)
+    type = Column(String)  # File type (csv, pdf, doc, etc.)
+    content = Column(Text)  # File content or base64 encoded content
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    message = relationship("ChatMessage", back_populates="file_outputs")

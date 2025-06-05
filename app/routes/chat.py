@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional
 from ..database import get_db
 from ..models.user import User
-from ..models.chat import ChatMessage
+from ..models.chat import ChatMessage, FileOutput
 from ..models.agent import Agent
 from ..models.model_settings import ModelSettings
 from ..models.api_key import APIKey
@@ -16,6 +16,10 @@ from ..services.vector_service import VectorService
 import os
 import uuid
 import shutil
+import json
+import base64
+import csv
+import io
 from ..models.chat import FileAttachment
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -226,6 +230,45 @@ async def create_message(
                 "attachments": file_attachments
             }
             response_content = await get_ai_response_from_model(conversation)
+
+        # Check if this is a file generation request
+        is_file_request = any(keyword in content.lower() for keyword in ["generate csv", "create csv", "download csv", "generate pdf", "create pdf", "download pdf", "generate doc", "create doc", "download doc"])
+        
+        if is_file_request:
+            # Process file generation request
+            file_type = None
+            if "csv" in content.lower():
+                file_type = "csv"
+            elif "pdf" in content.lower():
+                file_type = "pdf"
+            elif "doc" in content.lower():
+                file_type = "doc"
+            
+            # Get AI response for file content
+            conversation = {
+                "messages": formatted_messages,
+                "agent_instructions": f"Generate content for a {file_type.upper()} file based on the user's request.",
+                "model": model,
+                "provider": model_setting.provider,
+                "api_key": api_key.api_key
+            }
+            
+            file_content = await get_ai_response_from_model(conversation)
+            
+            # Create a unique filename
+            file_name = f"generated_{uuid.uuid4().hex[:8]}.{file_type}"
+            
+            # Create FileOutput record
+            file_output = FileOutput(
+                message_id=user_message.id,
+                name=file_name,
+                type=file_type,
+                content=file_content
+            )
+            db.add(file_output)
+            
+            # Create assistant message with download link
+            response_content = f"I've generated the {file_type.upper()} file for you. You can download it using this link: [Download {file_name}](/api/chat/download/{file_output.id})"
 
         ai_message = ChatMessage(
             agent_id=agent_id,
@@ -465,4 +508,65 @@ async def web_search(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error performing web search: {str(e)}"
+        ) 
+
+@router.get("/download/{file_id}")
+async def download_file(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download a generated file"""
+    # Get the file output record
+    file_output = db.query(FileOutput).filter(FileOutput.id == file_id).first()
+    if not file_output:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Verify the user has access to this file
+    message = db.query(ChatMessage).filter(ChatMessage.id == file_output.message_id).first()
+    if not message or message.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    try:
+        if file_output.type == "csv":
+            # Parse the CSV content and create a file-like object
+            content = io.StringIO()
+            if file_output.content.startswith("[") and file_output.content.endswith("]"):
+                # Handle JSON array format
+                rows = json.loads(file_output.content)
+                if rows:
+                    writer = csv.DictWriter(content, fieldnames=rows[0].keys())
+                    writer.writeheader()
+                    writer.writerows(rows)
+            else:
+                # Handle raw CSV content
+                content.write(file_output.content)
+            
+            content.seek(0)
+            return StreamingResponse(
+                iter([content.getvalue()]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={file_output.name}"}
+            )
+            
+        elif file_output.type in ["pdf", "doc"]:
+            # For PDF and DOC files, return the content directly
+            content = io.BytesIO(file_output.content.encode())
+            media_type = "application/pdf" if file_output.type == "pdf" else "application/msword"
+            return StreamingResponse(
+                iter([content.getvalue()]),
+                media_type=media_type,
+                headers={"Content-Disposition": f"attachment; filename={file_output.name}"}
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating file: {str(e)}"
         ) 
