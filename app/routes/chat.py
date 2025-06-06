@@ -21,6 +21,8 @@ import base64
 import csv
 import io
 from ..models.chat import FileAttachment
+from fpdf import FPDF
+from docx import Document
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -245,15 +247,54 @@ async def create_message(
                 file_type = "doc"
             
             # Get AI response for file content
+            if file_type == "pdf":
+                agent_instructions = (
+                    "Return ONLY the following data as plain text, no explanations, no instructions, no markdown, no code blocks. "
+                    "Just output the data, separated by commas, one row per line. For example:\n"
+                    "Name,Email,Age,Country\nJohn Doe,johndoe@email.com,30,Canada\nJane Smith,janesmith@email.com,30,Canada\nBob Johnson,bobjohnson@email.com,35,UK"
+                )
+            elif file_type == "doc":
+                agent_instructions = (
+                    "Return ONLY the content for a DOC file, no explanations, no code blocks, no markdown, just the plain text."
+                )
+            else:
+                agent_instructions = (
+                    "Return ONLY the raw CSV content, no explanations, no code blocks, no markdown, no instructions. "
+                    "Just output the CSV data as plain text."
+                )
+            
             conversation = {
                 "messages": formatted_messages,
-                "agent_instructions": f"Generate content for a {file_type.upper()} file based on the user's request.",
+                "agent_instructions": agent_instructions,
                 "model": model,
                 "provider": model_setting.provider,
                 "api_key": api_key.api_key
             }
             
             file_content = await get_ai_response_from_model(conversation)
+            
+            # Convert to PDF or DOC if needed
+            clean_content = extract_data_only(file_content)
+            if file_type == "pdf":
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.set_font("Arial", size=12)
+                for line in clean_content.split('\n'):
+                    pdf.cell(0, 10, line, ln=True)
+                pdf_bytes = pdf.output(dest='S').encode('latin1')
+                file_content_to_save = base64.b64encode(pdf_bytes).decode('utf-8')
+            elif file_type == "doc":
+                import io
+                doc = Document()
+                for line in clean_content.split('\n'):
+                    doc.add_paragraph(line)
+                doc_io = io.BytesIO()
+                doc.save(doc_io)
+                doc_bytes = doc_io.getvalue()
+                file_content_to_save = base64.b64encode(doc_bytes).decode('utf-8')
+            else:
+                file_content_to_save = clean_content  # CSV stays as plain text
             
             # Create a unique filename
             file_name = f"generated_{uuid.uuid4().hex[:8]}.{file_type}"
@@ -263,12 +304,14 @@ async def create_message(
                 message_id=user_message.id,
                 name=file_name,
                 type=file_type,
-                content=file_content
+                content=file_content_to_save
             )
             db.add(file_output)
+            db.commit()
+            db.refresh(file_output)
             
             # Create assistant message with download link
-            response_content = f"I've generated the {file_type.upper()} file for you. You can download it using this link: [Download {file_name}](/api/chat/download/{file_output.id})"
+            response_content = f"I've generated the {file_type.upper()} file for you. You can download it using this link: [Download {file_name}](/download/{file_output.id})"
 
         ai_message = ChatMessage(
             agent_id=agent_id,
@@ -556,17 +599,45 @@ async def download_file(
             )
             
         elif file_output.type in ["pdf", "doc"]:
-            # For PDF and DOC files, return the content directly
-            content = io.BytesIO(file_output.content.encode())
-            media_type = "application/pdf" if file_output.type == "pdf" else "application/msword"
-            return StreamingResponse(
-                iter([content.getvalue()]),
-                media_type=media_type,
-                headers={"Content-Disposition": f"attachment; filename={file_output.name}"}
-            )
+            try:
+                content = base64.b64decode(file_output.content)
+                content_io = io.BytesIO(content)
+                media_type = "application/pdf" if file_output.type == "pdf" else "application/msword"
+                return StreamingResponse(
+                    iter([content_io.getvalue()]),
+                    media_type=media_type,
+                    headers={"Content-Disposition": f"attachment; filename={file_output.name}"}
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error processing file content: {str(e)}"
+                )
             
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating file: {str(e)}"
         ) 
+
+def extract_data_only(text):
+    import re
+    # Find the first CSV-like block (header and rows)
+    csv_block = None
+    # Try to find a markdown code block with CSV data
+    match = re.search(r'```[a-zA-Z]*\n([\s\S]*?)```', text)
+    if match:
+        csv_block = match.group(1).strip()
+    else:
+        # Fallback: find the first block of lines with commas
+        lines = text.splitlines()
+        csv_lines = []
+        found_header = False
+        for line in lines:
+            if ',' in line:
+                csv_lines.append(line.strip())
+                found_header = True
+            elif found_header and line.strip() == '':
+                break
+        csv_block = '\n'.join(csv_lines)
+    return csv_block.strip() if csv_block else '' 

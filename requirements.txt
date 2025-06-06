@@ -34,3 +34,5 @@ transformers
 PyPDF2
 pgvector
 pypdf
+fpdf
+docx
