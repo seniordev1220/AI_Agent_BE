@@ -215,11 +215,6 @@ async def create_message(
                 "references": references
             }
             response_content = await get_ai_response_from_vectorstore(conversation)
-            
-            # Add a note about unconnected sources if any were used
-            unconnected_sources = {ref["source_name"] for ref in references if not ref["is_connected"]}
-            if unconnected_sources:
-                response_content += f"\n\nNote: Some of this information came from sources that aren't connected to me yet: {', '.join(unconnected_sources)}. You may want to connect them for better context in future conversations."
         
         # If no results found in vector search
         if not response_content:
