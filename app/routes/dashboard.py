@@ -24,28 +24,42 @@ def count_tokens(text: str) -> int:
 
 @router.get("/stats")
 async def get_dashboard_stats(
+    range: str = "all",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get dashboard statistics including token usage and top agents"""
+    """Get dashboard statistics including token usage and top agents, filtered by time range"""
     
-    # Get total number of users
+    # Determine date filter if needed
+    date_filter = None
+    if range == "30d":
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30)
+        date_filter = (ChatMessage.created_at >= start_date, ChatMessage.created_at <= end_date)
+
+    # Get total number of users (all time)
     total_users = db.query(func.count(User.id)).scalar()
     
-    # Get total messages
-    total_messages = db.query(func.count(ChatMessage.id)).scalar()
-    
-    # Calculate token usage across all chat messages
-    messages = db.query(ChatMessage.content).all()
+    # Get total messages (filtered if needed)
+    msg_query = db.query(ChatMessage)
+    if date_filter:
+        msg_query = msg_query.filter(*date_filter)
+    total_messages = msg_query.count()
+
+    # Calculate token usage across all chat messages (filtered if needed)
+    messages = msg_query.with_entities(ChatMessage.content).all()
     total_tokens = sum(count_tokens(msg[0]) for msg in messages if msg[0])
-    
-    # Get top AI agents used with message counts
-    top_agents = db.query(
+
+    # Get top AI agents used with message counts (filtered if needed)
+    agent_query = db.query(
         Agent.name,
         func.count(ChatMessage.id).label('message_count')
     ).join(
         ChatMessage, Agent.id == ChatMessage.agent_id
-    ).group_by(
+    )
+    if date_filter:
+        agent_query = agent_query.filter(*date_filter)
+    top_agents = agent_query.group_by(
         Agent.id, Agent.name
     ).order_by(
         desc('message_count')
