@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import timedelta
+from datetime import datetime, timedelta
 from ..database import get_db
 from ..schemas.user import UserCreate, UserResponse, Token, GoogleAuth
 from ..models.user import User
+from ..models.subscription import Subscription
+from ..schemas.subscription import PlanType, SubscriptionStatus
 from ..utils.password import verify_password, get_password_hash
 from ..utils.auth import create_access_token
 from ..config import settings
@@ -33,6 +35,20 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
+    # Create trial subscription automatically
+    trial_end = datetime.utcnow() + timedelta(days=14)
+    trial_subscription = Subscription(
+        user_id=db_user.id,
+        plan_type=PlanType.INDIVIDUAL,
+        status=SubscriptionStatus.TRIALING,
+        trial_end=trial_end,
+        current_period_end=trial_end,
+        seats=1
+    )
+    db.add(trial_subscription)
+    db.commit()
+
     return db_user
 
 @router.post("/login", response_model=Token)

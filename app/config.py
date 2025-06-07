@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     PERPLEXITY_API_KEY: str
     ADMIN_DATABASE_URL: str
     USER_DATABASE_URL_BASE: str
+    STRIPE_SECRET_KEY: str
+    STRIPE_WEBHOOK_SECRET: str
+    STRIPE_PUBLIC_KEY: str
 
     class Config:
         env_file = ".env"

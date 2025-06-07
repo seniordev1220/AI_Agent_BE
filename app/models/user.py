@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -11,6 +12,10 @@ class User(Base):
     last_name = Column(String)
     hashed_password = Column(String, nullable=True)  # Make nullable for Google auth
     provider = Column(String, nullable=True)  # Add provider field
+    stripe_customer_id = Column(String, unique=True, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     # Add relationship to Agent model
     agents = relationship("Agent", back_populates="user")
@@ -18,3 +23,4 @@ class User(Base):
     model_settings = relationship("ModelSettings", back_populates="user")
     data_sources = relationship("DataSource", back_populates="user")
     vector_sources = relationship("VectorSource", back_populates="user")
+    subscription = relationship("Subscription", back_populates="user", uselist=False)
