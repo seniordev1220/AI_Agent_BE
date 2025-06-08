@@ -23,7 +23,6 @@ import io
 from ..models.chat import FileAttachment
 from fpdf import FPDF
 from docx import Document
-from ..utils.subscription import check_active_subscription
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -56,7 +55,6 @@ async def create_message(
     model: str = Form(...),
     files: List[UploadFile] = File(default=[]),
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Create a new chat message and get AI response"""
@@ -334,7 +332,6 @@ async def create_message(
 async def get_chat_history(
     agent_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Get chat history for an agent"""
@@ -376,7 +373,6 @@ async def get_chat_history(
 async def clear_chat_history(
     agent_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Clear chat history for an agent"""
@@ -391,7 +387,6 @@ async def generate_image(
     agent_id: int,
     prompt: str = Form(...),
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Generate an image using OpenAI DALL-E"""
@@ -472,7 +467,6 @@ async def web_search(
     agent_id: int,
     content: str = Form(...),
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Perform web search using Perplexity AI"""
@@ -558,7 +552,6 @@ async def web_search(
 async def download_file(
     file_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     """Download a generated file"""
