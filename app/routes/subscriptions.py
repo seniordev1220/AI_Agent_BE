@@ -14,12 +14,15 @@ from ..schemas.subscription import (
     PLAN_PRICES
 )
 from ..utils.auth import get_current_user
-from ..config import settings
+# from ..config import settings
+from ..config import config
+import os
 
 router = APIRouter(prefix="/subscription", tags=["Subscription"])
 
 # Initialize Stripe with your secret key
-stripe.api_key = settings.STRIPE_SECRET_KEY
+# stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_key = config["STRIPE_SECRET_KEY"]
 
 # Stripe Product IDs for each plan
 STRIPE_PRODUCTS = {
@@ -197,7 +200,7 @@ async def stripe_webhook(request: Request):
 
     try:
         event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+            payload, sig_header, config["STRIPE_WEBHOOK_SECRET"]
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail='Invalid payload')
@@ -233,4 +236,4 @@ async def handle_subscription_deleted(subscription_object):
 
     if db_subscription:
         db_subscription.status = 'canceled'
-        db.commit() 
+        db.commit()

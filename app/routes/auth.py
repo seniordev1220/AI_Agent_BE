@@ -9,7 +9,7 @@ from ..models.subscription import Subscription
 from ..schemas.subscription import PlanType, SubscriptionStatus
 from ..utils.password import verify_password, get_password_hash
 from ..utils.auth import create_access_token
-from ..config import settings
+from ..config import config
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -61,7 +61,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
@@ -93,7 +93,7 @@ def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
     db.refresh(db_user)
     
     # Create access token
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))
     access_token = create_access_token(
         data={"sub": db_user.email}, expires_delta=access_token_expires
     )
