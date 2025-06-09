@@ -46,6 +46,7 @@ log/
 .env.development
 .env.test
 .env.production
+.env
 
 # Database
 *.sqlite3
