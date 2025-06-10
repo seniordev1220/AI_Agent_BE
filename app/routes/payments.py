@@ -9,26 +9,44 @@ router = APIRouter(prefix="/payment", tags=["payment"])
 # Initialize Stripe with the API key from environment variables
 stripe.api_key = config["STRIPE_SECRET_KEY"]
 
-# Price IDs for different plans
+# Price IDs for different plans and their seat prices
 PRICE_IDS = {
     "individual": {
-        "monthly": "price_1RYQV6IqfRSqLdqDCfQgwH6M",  # Replace with actual Individual Monthly price ID
-        "annual": "price_1RYQTqIqfRSqLdqDK9UekeVQ"    # Replace with actual Individual Annual price ID
+        "monthly": {
+            "base": "price_1RYQV6IqfRSqLdqDCfQgwH6M",  # Base plan price
+            "seat": "price_1RYbafIqfRSqLdqDJJt1Mtvz"   # $7 per additional seat
+        },
+        "annual": {
+            "base": "price_1RYUbeIqfRSqLdqDHRsoKANR",  # Base plan price
+            "seat": "price_1RYbbDIqfRSqLdqDsCr9GYkK"   # Annual seat price
+        }
     },
     "standard": {
-        "monthly": "price_1RYQiZIqfRSqLdqDetDS4LyJ",  # Replace with actual Standard Monthly price ID
-        "annual": "price_1RYQi8IqfRSqLdqDRuZHYAA8"    # Replace with actual Standard Annual price ID
+        "monthly": {
+            "base": "price_1RYQiZIqfRSqLdqDetDS4LyJ",
+            "seat": "price_1RYbbgIqfRSqLdqDpqIUHXdY"
+        },
+        "annual": {
+            "base": "price_1RYUcJIqfRSqLdqDuSTUw4be",
+            "seat": "price_1RYbc8IqfRSqLdqDmTYuLuDG"
+        }
     },
     "smb": {
-        "monthly": "price_1RYQjGIqfRSqLdqDD7xwlV0w",  # Replace with actual SMB Monthly price ID
-        "annual": "price_1RYQitIqfRSqLdqDHNlT5KwT"    # Replace with actual SMB Annual price ID
+        "monthly": {
+            "base": "price_1RYQjGIqfRSqLdqDD7xwlV0w",
+            "seat": "price_1RYbcUIqfRSqLdqDvWcUSvv2"
+        },
+        "annual": {
+            "base": "price_1RYUceIqfRSqLdqD9jNpbllm",
+            "seat": "price_1RYbcvIqfRSqLdqDmV5KWCev"
+        }
     }
 }
 
 class CreateCheckoutSessionRequest(BaseModel):
     plan_type: Literal["individual", "standard", "smb"]
     billing_interval: Literal["monthly", "annual"]
-    quantity: int = 1
+    seats: int = 1
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
 
@@ -39,20 +57,30 @@ class RetrieveSessionRequest(BaseModel):
 async def create_checkout_session(request: CreateCheckoutSessionRequest):
     try:
         # Default URLs if not provided
-        success_url = request.success_url or f"{config["FRONTEND_URL"]}/payment/success"
-        cancel_url = request.cancel_url or f"{config["FRONTEND_URL"]}/dashboard/billing"
+        success_url = request.success_url or f"{config['FRONTEND_URL']}/payment/success"
+        cancel_url = request.cancel_url or f"{config['FRONTEND_URL']}/dashboard/billing"
 
-        # Get the appropriate price ID based on plan type and billing interval
-        price_id = PRICE_IDS[request.plan_type][request.billing_interval]
+        # Get the appropriate price IDs based on plan type and billing interval
+        price_ids = PRICE_IDS[request.plan_type][request.billing_interval]
+        
+        # Create line items for base plan and additional seats
+        line_items = [
+            {
+                "price": price_ids["base"],
+                "quantity": 1,  # Base plan is always quantity 1
+            }
+        ]
+        
+        # Add additional seats if more than 1 seat is requested
+        if request.seats > 1:
+            line_items.append({
+                "price": price_ids["seat"],
+                "quantity": request.seats - 1,  # Subtract 1 because base plan includes 1 seat
+            })
 
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
-            line_items=[
-                {
-                    "price": price_id,
-                    "quantity": request.quantity,
-                }
-            ],
+            line_items=line_items,
             mode="subscription",
             success_url=f"{success_url}?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=cancel_url,
