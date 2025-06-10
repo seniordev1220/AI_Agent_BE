@@ -22,7 +22,6 @@ import os
 from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 from ..services.vector_service import VectorService
-from ..utils.subscription import check_active_subscription
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
@@ -30,7 +29,6 @@ router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 async def create_data_source(
     data_source: VectorSourceCreate,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     # Initialize vector service with only user_id
@@ -86,7 +84,6 @@ async def create_data_source(
 @router.get("", response_model=List[VectorSourceResponse])
 async def get_data_sources(
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     return db.query(VectorSource).filter(VectorSource.user_id == current_user.id).all()
@@ -95,7 +92,6 @@ async def get_data_sources(
 async def get_data_source(
     data_source_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     data_source = db.query(DataSource).filter(
@@ -113,7 +109,6 @@ async def update_data_source(
     data_source_id: int,
     data_source_update: DataSourceUpdate,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     data_source = db.query(DataSource).filter(
@@ -139,7 +134,6 @@ async def update_data_source(
 async def delete_data_source(
     data_source_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     # Initialize vector service with only user_id
@@ -180,7 +174,6 @@ async def delete_data_source(
 async def upload_file(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):    
     try:
@@ -196,12 +189,10 @@ async def upload_file(
             detail=f"Error uploading file: {str(e)}"
         )
 
-
 @router.post("/{data_source_id}/connection-test", response_model=VectorSourceResponse)
 async def test_data_source_connection(
     data_source_id: int,
     current_user: User = Depends(get_current_user),
-    subscription = Depends(check_active_subscription),
     db: Session = Depends(get_db)
 ):
     data_source = db.query(VectorSource).filter(
