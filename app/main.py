@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard
+from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments
 from .database import engine
 from .models import user
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +40,7 @@ app.include_router(chat.router)
 app.include_router(model_settings.router)
 app.include_router(data_source.router)
 app.include_router(dashboard.router)
+app.include_router(payments.router)
 
 @app.get("/")
 def root():
