@@ -10,12 +10,10 @@ from ..utils.auth import get_current_user
 router = APIRouter(prefix="/models", tags=["Models"])
 
 DEFAULT_MODELS = [
-    {"ai_model_name": "GPT-4.5", "provider": "openai", "logo_path": "/model_logo/openai-logo.svg", "is_enabled": False},
     {"ai_model_name": "GPT 3.5 Turbo", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": False},
     {"ai_model_name": "GPT-4o Mini", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
     {"ai_model_name": "GPT-4", "provider": "openai", "logo_path": "/model_logo/gpt4-mini-logo.svg", "is_enabled": True},
     {"ai_model_name": "Claude-3.5", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
-    {"ai_model_name": "Claude-3.7", "provider": "anthropic", "logo_path": "/model_logo/anthropic-logo.svg", "is_enabled": False},
     {"ai_model_name": "Gemini", "provider": "gemini", "logo_path": "/model_logo/google-logo.svg", "is_enabled": False},
     {"ai_model_name": "Mistral", "provider": "mistral", "logo_path": "/model_logo/mistral-logo.svg", "is_enabled": False},
 ]
