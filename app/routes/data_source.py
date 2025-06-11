@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from ..database import get_db
 from ..models.user import User
 from ..models.data_source import DataSource
@@ -315,4 +315,84 @@ async def connect_google_drive(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error connecting Google Drive data source: {str(e)}"
+        )
+
+@router.post("/hubspot", response_model=VectorSourceResponse)
+async def connect_hubspot(
+    data_source_name: str = Form(...),
+    config: Dict[str, Any] = Form(...),
+    stream_name: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Initialize vector service
+        vector_service = VectorService(current_user.id)
+        
+        # Prepare connection settings
+        connection_settings = {
+            "config": config,
+            "stream_name": stream_name
+        }
+        
+        # Create vector source
+        db_data_source = await vector_service.create_vector_source(
+            name=data_source_name,
+            source_type="hubspot",
+            connection_settings=connection_settings,
+            embedding_model="openai",
+            db=db
+        )
+        
+        # Track size
+        size_tracking_service = SizeTrackingService(db)
+        await size_tracking_service.track_source_size(db_data_source.id)
+        
+        return db_data_source
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error connecting to HubSpot: {str(e)}"
+        )
+
+@router.post("/salesforce", response_model=VectorSourceResponse)
+async def connect_salesforce(
+    data_source_name: str = Form(...),
+    config: Dict[str, Any] = Form(...),
+    stream_name: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Initialize vector service
+        vector_service = VectorService(current_user.id)
+        
+        # Prepare connection settings
+        connection_settings = {
+            "config": config,
+            "stream_name": stream_name
+        }
+        
+        # Create vector source
+        db_data_source = await vector_service.create_vector_source(
+            name=data_source_name,
+            source_type="salesforce",
+            connection_settings=connection_settings,
+            embedding_model="openai",
+            db=db
+        )
+        
+        # Track size
+        size_tracking_service = SizeTrackingService(db)
+        await size_tracking_service.track_source_size(db_data_source.id)
+        
+        return db_data_source
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error connecting to Salesforce: {str(e)}"
         )

@@ -13,6 +13,10 @@ from langchain_community.document_loaders import (
     WebBaseLoader,
     SnowflakeLoader,
 )
+from langchain_community.document_loaders.airbyte import (
+    AirbyteSalesforceLoader,
+    AirbyteHubspotLoader,
+)
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from typing import List, Dict, Any, Callable
 import os
@@ -119,14 +123,18 @@ class DataSourceLoader:
                 metadata_columns=self.connection_settings.get("metadata_columns")
             ).load()
         elif self.source_type == "salesforce":
-            return SalesforceLoader(
-                query=self.connection_settings["query"],
-                access_token=self.connection_settings["access_token"]
+            return AirbyteSalesforceLoader(
+                config=self.connection_settings["config"],
+                stream_name=self.connection_settings["stream_name"],
+                record_handler=self.connection_settings.get("record_handler"),
+                state=self.connection_settings.get("state")
             ).load()
         elif self.source_type == "hubspot":
-            return HubSpotLoader(
-                access_token=self.connection_settings["access_token"],
-                object_type=self.connection_settings["object_type"]
+            return AirbyteHubspotLoader(
+                config=self.connection_settings["config"],
+                stream_name=self.connection_settings["stream_name"],
+                record_handler=self.connection_settings.get("record_handler"),
+                state=self.connection_settings.get("state")
             ).load()
         else:
             raise ValueError(f"Unsupported source_type: {self.source_type}")
