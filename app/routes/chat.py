@@ -229,33 +229,52 @@ async def create_message(
             response_content = await get_ai_response_from_model(conversation)
 
         # Check if this is a file generation request
-        is_file_request = any(keyword in content.lower() for keyword in ["generate csv", "create csv", "download csv", "generate pdf", "create pdf", "download pdf", "generate doc", "create doc", "download doc"])
+        file_keywords = ["provide", "generate", "create", "download", "export", "save", "convert"]
+        file_types = ["csv", "pdf", "doc", "docx", "document"]
+        
+        is_file_request = (
+            any(keyword in content.lower() for keyword in file_keywords) and
+            any(ftype in content.lower() for ftype in file_types)
+        )
         
         if is_file_request:
-            # Process file generation request
+            # Determine file type based on content
             file_type = None
             if "csv" in content.lower():
                 file_type = "csv"
             elif "pdf" in content.lower():
                 file_type = "pdf"
-            elif "doc" in content.lower():
+            elif any(doc_type in content.lower() for doc_type in ["doc", "docx", "document"]):
                 file_type = "doc"
             
-            # Get AI response for file content
+            # Get AI response for file content based on file type
             if file_type == "pdf":
                 agent_instructions = (
-                    "Return ONLY the following data as plain text, no explanations, no instructions, no markdown, no code blocks. "
-                    "Just output the data, separated by commas, one row per line. For example:\n"
-                    "Name,Email,Age,Country\nJohn Doe,johndoe@email.com,30,Canada\nJane Smith,janesmith@email.com,30,Canada\nBob Johnson,bobjohnson@email.com,35,UK"
+                    "You are tasked with generating content for a PDF file. Follow these guidelines:\n"
+                    "1. Format the content in a clear, structured way suitable for PDF\n"
+                    "2. Include appropriate headers and sections if relevant\n"
+                    "3. Return ONLY the content, no explanations or markdown\n"
+                    "4. Ensure proper spacing between sections\n"
+                    "5. Keep the formatting simple and compatible with PDF generation"
                 )
             elif file_type == "doc":
                 agent_instructions = (
-                    "Return ONLY the content for a DOC file, no explanations, no code blocks, no markdown, just the plain text."
+                    "You are tasked with generating content for a Word document. Follow these guidelines:\n"
+                    "1. Format the content in a clear, structured way suitable for a document\n"
+                    "2. Include appropriate headers and sections if relevant\n"
+                    "3. Return ONLY the content, no explanations or markdown\n"
+                    "4. Ensure proper spacing between sections\n"
+                    "5. Keep the formatting simple and compatible with document generation"
                 )
-            else:
+            else:  # CSV
                 agent_instructions = (
-                    "Return ONLY the raw CSV content, no explanations, no code blocks, no markdown, no instructions. "
-                    "Just output the CSV data as plain text."
+                    "You are tasked with generating CSV data. Follow these guidelines:\n"
+                    "1. Return ONLY the raw CSV content\n"
+                    "2. First line should be the header row with column names\n"
+                    "3. Use commas as delimiters\n"
+                    "4. Each record on a new line\n"
+                    "5. No explanations, no code blocks, no markdown\n"
+                    "6. Ensure data is properly formatted and escaped if needed"
                 )
             
             conversation = {
@@ -269,7 +288,7 @@ async def create_message(
             file_content = await get_ai_response_from_model(conversation)
             
             # Convert to PDF or DOC if needed
-            clean_content = extract_data_only(file_content)
+            clean_content = extract_data_only(file_content, file_type)
             if file_type == "pdf":
                 pdf = FPDF()
                 pdf.add_page()
@@ -668,24 +687,42 @@ async def download_file(
             detail=f"Error generating file: {str(e)}"
         ) 
 
-def extract_data_only(text):
+def extract_data_only(text, file_type="csv"):
+    """
+    Extract clean content from AI response based on file type.
+    Args:
+        text (str): The raw text from AI response
+        file_type (str): The type of file being generated (csv, pdf, doc)
+    Returns:
+        str: Cleaned content suitable for the specified file type
+    """
     import re
-    # Find the first CSV-like block (header and rows)
-    csv_block = None
-    # Try to find a markdown code block with CSV data
-    match = re.search(r'```[a-zA-Z]*\n([\s\S]*?)```', text)
-    if match:
-        csv_block = match.group(1).strip()
-    else:
-        # Fallback: find the first block of lines with commas
+    
+    # Remove any markdown code blocks
+    text = re.sub(r'```[a-zA-Z]*\n([\s\S]*?)```', r'\1', text)
+    
+    if file_type == "csv":
+        # Find CSV-like content (lines with commas)
         lines = text.splitlines()
         csv_lines = []
-        found_header = False
         for line in lines:
-            if ',' in line:
+            # Skip empty lines and lines that look like explanations
+            if line.strip() and ',' in line and not line.startswith(('#', '//', '--')):
                 csv_lines.append(line.strip())
-                found_header = True
-            elif found_header and line.strip() == '':
-                break
-        csv_block = '\n'.join(csv_lines)
-    return csv_block.strip() if csv_block else '' 
+        return '\n'.join(csv_lines)
+    
+    else:  # pdf or doc
+        # Remove common markdown and code formatting
+        text = re.sub(r'[`*_#]', '', text)  # Remove markdown characters
+        text = re.sub(r'\n{3,}', '\n\n', text)  # Normalize multiple newlines
+        text = re.sub(r'^\s*[-+*]\s', '', text, flags=re.MULTILINE)  # Remove list markers
+        
+        # Clean up the text
+        lines = text.splitlines()
+        clean_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith(('//', '--', '#')):  # Skip comments
+                clean_lines.append(line)
+        
+        return '\n'.join(clean_lines) 
