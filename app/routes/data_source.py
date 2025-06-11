@@ -16,12 +16,13 @@ from ..utils.auth import get_current_user
 from ..utils.data_source_validator import validate_connection_settings
 # from ..services.ingestion_service import IngestionService
 # from ..schemas.processed_data import ProcessedDataResponse
-from ..utils.file_handler import FileHandler
+from ..utils.file_handler import FileHandler, save_upload_file
 from datetime import datetime
 import os
 from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 from ..services.vector_service import VectorService
+import uuid
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
@@ -204,7 +205,7 @@ async def test_data_source_connection(
         raise HTTPException(status_code=404, detail="Data source not found")
 
     try:
-        # Toggle is_connected status
+        # Toggle is_converted status
         data_source.is_converted = not data_source.is_converted
         db.commit()
         db.refresh(data_source)
@@ -212,3 +213,106 @@ async def test_data_source_connection(
         return data_source
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/slack", response_model=VectorSourceResponse)
+async def connect_slack(
+    file: UploadFile = File(...),
+    workspace_url: str = Form(...),
+    data_source_name: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Initialize file upload service
+        file_service = FileUploadService(db)
+        
+        # Save the ZIP file
+        file_uuid = str(uuid.uuid4())
+        file_extension = os.path.splitext(file.filename)[1]
+        unique_filename = f"{file_uuid}{file_extension}"
+        file_path = os.path.join(file_service.upload_dir, unique_filename)
+        
+        # Save file
+        await save_upload_file(file, file_path)
+        
+        # Create connection settings for Slack
+        connection_settings = {
+            "zip_path": file_path,
+            "workspace_url": workspace_url,
+            "original_filename": file.filename,
+            "content_type": file.content_type,
+            "file_size": os.path.getsize(file_path)
+        }
+        
+        # Initialize vector service
+        vector_service = VectorService(current_user.id)
+        
+        # Create vector source for Slack
+        data_source = await vector_service.create_vector_source(
+            name=data_source_name,
+            source_type="slack",
+            connection_settings=connection_settings,
+            embedding_model="openai",
+            db=db
+        )
+        
+        return data_source
+        
+    except Exception as e:
+        # Clean up the file if something goes wrong
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error connecting Slack data source: {str(e)}"
+        )
+
+@router.post("/google-drive", response_model=VectorSourceResponse)
+async def connect_google_drive(
+    data_source_name: str = Form(...),
+    folder_id: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
+    refresh_token: str = Form(...),
+    load_recursively: bool = Form(False),
+    load_trashed_files: bool = Form(False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Create connection settings with OAuth credentials
+        connection_settings = {
+            "folder_id": folder_id,
+            "credentials": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "type": "authorized_user"
+            },
+            "load_recursively": load_recursively,
+            "load_trashed_files": load_trashed_files
+        }
+        
+        # Initialize vector service
+        vector_service = VectorService(current_user.id)
+        
+        # Create vector source for Google Drive
+        data_source = await vector_service.create_vector_source(
+            name=data_source_name,
+            source_type="google_drive",
+            connection_settings=connection_settings,
+            embedding_model="openai",
+            db=db
+        )
+        
+        return data_source
+        
+    except Exception as e:
+        # Clean up the token file if something goes wrong
+        if token_file_path and os.path.exists(token_file_path):
+            os.remove(token_file_path)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error connecting Google Drive data source: {str(e)}"
+        )

@@ -36,3 +36,4 @@ pgvector
 pypdf
 fpdf
 docx
+stripe
