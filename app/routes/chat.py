@@ -349,12 +349,47 @@ async def get_chat_history(
             FileAttachment.message_id == msg.id
         ).all()
         
+        # Initialize search metadata
+        search_metadata = {
+            "citations": [],
+            "search_results": [],
+            "choices": []
+        }
+        
+        # Handle content based on message type
+        content = msg.content
+        if msg.model == "sonar" and msg.role == "assistant":
+            try:
+                # Try to parse JSON content for web search messages
+                content_data = json.loads(msg.content)
+                content = content_data.get("ai_response", msg.content)  # Fallback to original content if parsing fails
+                # Get search metadata
+                metadata = content_data.get("search_metadata", {})
+                
+                # Handle citations that could be strings or dictionaries
+                citations = metadata.get("citations", [])
+                if citations and isinstance(citations[0], str):
+                    # If citations are strings (URLs), keep them as is
+                    search_metadata["citations"] = citations
+                else:
+                    # If citations are dictionaries or other format, store as is
+                    search_metadata["citations"] = citations
+                
+                # Handle other metadata
+                search_metadata.update({
+                    "search_results": metadata.get("search_results", []),
+                    "choices": metadata.get("choices", [])
+                })
+            except json.JSONDecodeError:
+                # If not JSON, use the content as is
+                pass
+        
         formatted_message = {
             "id": msg.id,
             "agent_id": msg.agent_id,
             "user_id": msg.user_id,
             "role": msg.role,
-            "content": msg.content,
+            "content": content,
             "model": msg.model,
             "created_at": msg.created_at,
             "attachments": [{
@@ -363,8 +398,13 @@ async def get_chat_history(
                 "type": att.type,
                 "url": att.url,
                 "size": att.size
-            } for att in attachments]
+            } for att in attachments],
+            "references": msg.references or [],
+            "citations": search_metadata["citations"],
+            "search_results": search_metadata["search_results"],
+            "choices": search_metadata["choices"]
         }
+        
         formatted_messages.append(formatted_message)
     
     return ChatHistoryResponse(messages=formatted_messages)
@@ -519,13 +559,26 @@ async def web_search(
             
             # Format the response content with citations and search results
             ai_content = result["choices"][0]["message"]["content"]
+            
+            # Store additional search information in the message
+            search_metadata = {
+                "citations": result.get("citations", []),
+                "search_results": result.get("search_results", []),
+                "choices": result.get("choices", [])
+            }
+            
+            # Create a formatted message that includes both the AI response and search metadata
+            full_content = {
+                "ai_response": ai_content,
+                "search_metadata": search_metadata
+            }
 
-        # Save the enhanced response as assistant's message
+        # Save the enhanced response as assistant's message with complete search data
         ai_message = ChatMessage(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
-            content=ai_content,
+            content=json.dumps(full_content),  # Store the complete content as JSON
             model="sonar"
         )
         db.add(ai_message)

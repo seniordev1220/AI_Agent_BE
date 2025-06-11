@@ -50,6 +50,9 @@ class ChatMessageResponse(BaseModel):
     created_at: datetime
     attachments: List[FileAttachmentResponse] = []
     references: List[FileReference] = []
+    citations: Optional[List[Union[str, Dict]]] = Field(default_factory=list)
+    search_results: Optional[List[Dict]] = Field(default_factory=list)
+    choices: Optional[List[Dict]] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
