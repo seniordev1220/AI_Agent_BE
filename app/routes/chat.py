@@ -71,7 +71,8 @@ async def create_message(
 
     # Get all available vector sources for the user
     available_sources = db.query(VectorSource).filter(
-        VectorSource.user_id == current_user.id
+        VectorSource.user_id == current_user.id,
+        VectorSource.id.in_(agent.vector_sources_ids or [])  # Only get connected sources
     ).all()
 
     # Check if requested model is enabled
@@ -167,7 +168,7 @@ async def create_message(
         references = []
         similar_results = []
 
-        # Search through ALL available vector sources
+        # Search through connected vector sources only
         for vector_source in available_sources:
             try:
                 results = await vector_service.search_similar(
@@ -179,8 +180,7 @@ async def create_message(
                 # Add source information to results
                 for result in results:
                     result['source_name'] = vector_source.name
-                    # Add connection status to the result
-                    result['is_connected'] = vector_source.id in (agent.vector_sources_ids or [])
+                    result['is_connected'] = True  # All sources are now connected by definition
                 similar_results.extend(results)
             except Exception as e:
                 print(f"Error searching vector source {vector_source.name}: {str(e)}")
