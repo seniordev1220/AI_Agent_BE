@@ -10,6 +10,14 @@ class FileType(str, Enum):
     CSV = "csv"
     DOCX = "docx"
 
+class ConnectedSource(BaseModel):
+    id: int
+    name: str
+    type: str
+
+    class Config:
+        from_attributes = True
+
 class FileReference(BaseModel):
     source_name: str
     content: str
@@ -48,8 +56,9 @@ class ChatMessageResponse(BaseModel):
     content: str
     model: str
     created_at: datetime
+    updated_at: datetime
     attachments: List[FileAttachmentResponse] = []
-    references: List[FileReference] = []
+    connected_sources: List[ConnectedSource] = Field(default_factory=list)
     citations: Optional[List[Union[str, Dict]]] = Field(default_factory=list)
     search_results: Optional[List[Dict]] = Field(default_factory=list)
     choices: Optional[List[Dict]] = Field(default_factory=list)

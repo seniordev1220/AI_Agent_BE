@@ -9,7 +9,13 @@ from ..models.agent import Agent
 from ..models.model_settings import ModelSettings
 from ..models.api_key import APIKey
 from ..models.vector_source import VectorSource
-from ..schemas.chat import ChatMessageCreate, ChatMessageResponse, ChatHistoryResponse
+from ..schemas.chat import (
+    ChatMessageCreate, 
+    ChatMessageResponse, 
+    ChatHistoryResponse,
+    ConnectedSource,
+    FileAttachmentResponse
+)
 from ..utils.auth import get_current_user
 from ..utils.ai_client import get_ai_response_from_model, get_ai_response_from_vectorstore
 from ..services.vector_service import VectorService
@@ -48,7 +54,7 @@ async def save_uploaded_file(file: UploadFile, user_id: int) -> Dict:
     }
         
 
-@router.post("/{agent_id}/messages")
+@router.post("/{agent_id}/messages", response_model=ChatMessageResponse)
 async def create_message(
     agent_id: int,
     content: str = Form(...),
@@ -155,17 +161,16 @@ async def create_message(
             })
         
         # Add current message
-        formatted_messages.append({
-            "role": "user",
-            "content": content
-        })
+            formatted_messages.append({
+                "role": "user",
+                "content": content
+            })
         
         # Initialize VectorService and search similar content
         vector_service = VectorService(current_user.id)
         
         # Prepare the final response content and references
         response_content = ""
-        references = []
         similar_results = []
 
         # Search through connected vector sources only
@@ -180,6 +185,7 @@ async def create_message(
                 # Add source information to results
                 for result in results:
                     result['source_name'] = vector_source.name
+                    result['table_name'] = vector_source.table_name
                     result['is_connected'] = True  # All sources are now connected by definition
                 similar_results.extend(results)
             except Exception as e:
@@ -192,17 +198,21 @@ async def create_message(
             similar_results.sort(key=lambda x: x.get('score', 0), reverse=True)
             
             message_from_vector = ""
+            connected_sources = []
+            # Create a mapping of table_name to source info
+            source_mapping = {
+                source.table_name: {
+                    "id": source.id,
+                    "name": source.name,
+                    "type": source.source_type
+                } for source in available_sources
+            }
+            
             for result in similar_results:
-                # Include connection status in the source reference
-                connection_status = "" if result['is_connected'] else " (not connected)"
-                message_from_vector += f"[From {result['source_name']}{connection_status}]: {result['content']}\n"
-                # Store reference
-                references.append({
-                    "source_name": result['source_name'],
-                    "content": result['content'],
-                    "relevance_score": result.get('score', 0.0),
-                    "is_connected": result['is_connected']
-                })
+                message_from_vector += f"[From {result['source_name']}]: {result['content']}\n"
+                source_info = source_mapping.get(result['table_name'])
+                if source_info and source_info["id"] not in [s.get("id") for s in connected_sources]:
+                    connected_sources.append(source_info)
             
             conversation = {
                 "messages": message_from_vector,
@@ -211,10 +221,15 @@ async def create_message(
                 "provider": model_setting.provider,
                 "api_key": api_key.api_key,
                 "attachments": file_attachments,
-                "query": content,
-                "references": references
+                "query": content
             }
             response_content = await get_ai_response_from_vectorstore(conversation)
+
+            # Add connected sources to the response
+            response_content = {
+                "content": response_content,
+                "connected_sources": connected_sources
+            }
         
         # If no results found in vector search
         if not response_content:
@@ -227,6 +242,10 @@ async def create_message(
                 "attachments": file_attachments
             }
             response_content = await get_ai_response_from_model(conversation)
+            response_content = {
+                "content": response_content,
+                "connected_sources": []
+            }
 
         # Check if this is a file generation request
         file_keywords = ["provide", "generate", "create", "download", "export", "save", "convert"]
@@ -331,14 +350,30 @@ async def create_message(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
-            content=response_content,
-            model=model,
-            references=references
+            content=json.dumps(response_content),  # Store the complete content as JSON
+            model=model
         )
         db.add(ai_message)
         db.commit()
         db.refresh(ai_message)
-        return ai_message
+
+        # Format the response using ChatMessageResponse model
+        content_data = json.loads(ai_message.content)
+        return ChatMessageResponse(
+            id=ai_message.id,
+            agent_id=ai_message.agent_id,
+            user_id=ai_message.user_id,
+            role=ai_message.role,
+            content=content_data.get("content", ai_message.content),
+            model=ai_message.model,
+            created_at=ai_message.created_at,
+            updated_at=ai_message.updated_at,
+            attachments=[],  # No attachments for AI response
+            connected_sources=content_data.get("connected_sources", []),
+            citations=[],
+            search_results=[],
+            choices=[]
+        )
 
     except Exception as e:
         db.rollback()
@@ -360,6 +395,18 @@ async def get_chat_history(
         ChatMessage.user_id == current_user.id
     ).order_by(ChatMessage.created_at.asc()).all()
     
+    # Get all vector sources for mapping
+    vector_sources = db.query(VectorSource).filter(
+        VectorSource.user_id == current_user.id
+    ).all()
+    source_mapping = {
+        source.name: {
+            "id": source.id,
+            "name": source.name,
+            "type": source.source_type
+        } for source in vector_sources
+    }
+    
     # Format response with attachments
     formatted_messages = []
     for msg in messages:
@@ -368,61 +415,78 @@ async def get_chat_history(
             FileAttachment.message_id == msg.id
         ).all()
         
-        # Initialize search metadata
+        # Convert attachments to dictionaries
+        attachment_dicts = [{
+            "id": att.id,
+            "name": att.name,
+            "type": att.type,
+            "url": att.url,
+            "size": att.size
+        } for att in attachments]
+        
+        # Initialize metadata
+        content = msg.content
+        connected_sources = []
         search_metadata = {
             "citations": [],
             "search_results": [],
             "choices": []
         }
         
-        # Handle content based on message type
-        content = msg.content
-        if msg.model == "sonar" and msg.role == "assistant":
+        # Parse content if it's JSON
+        if msg.role == "assistant":
             try:
-                # Try to parse JSON content for web search messages
                 content_data = json.loads(msg.content)
-                content = content_data.get("ai_response", msg.content)  # Fallback to original content if parsing fails
-                # Get search metadata
-                metadata = content_data.get("search_metadata", {})
-                
-                # Handle citations that could be strings or dictionaries
-                citations = metadata.get("citations", [])
-                if citations and isinstance(citations[0], str):
-                    # If citations are strings (URLs), keep them as is
-                    search_metadata["citations"] = citations
-                else:
-                    # If citations are dictionaries or other format, store as is
-                    search_metadata["citations"] = citations
-                
-                # Handle other metadata
-                search_metadata.update({
-                    "search_results": metadata.get("search_results", []),
-                    "choices": metadata.get("choices", [])
-                })
-            except json.JSONDecodeError:
-                # If not JSON, use the content as is
+                if isinstance(content_data, dict):
+                    content = content_data.get("content", msg.content)
+                    # Handle connected sources
+                    sources_data = content_data.get("connected_sources", [])
+                    if sources_data:
+                        if isinstance(sources_data[0], str) and sources_data[0].endswith('.pdf'):
+                            # Convert old format (source names) to new format (source info)
+                            connected_sources = [
+                                source_mapping[name]
+                                for name in sources_data
+                                if name in source_mapping
+                            ]
+                        elif isinstance(sources_data[0], dict):
+                            # Already in new format (source info)
+                            connected_sources = sources_data
+                        else:
+                            # Handle case where it's a list of IDs
+                            source_id_to_info = {s.id: {"id": s.id, "name": s.name, "type": s.source_type} for s in vector_sources}
+                            connected_sources = [
+                                source_id_to_info[sid]
+                                for sid in sources_data
+                                if sid in source_id_to_info
+                            ]
+                    
+                    # Handle web search metadata if present
+                    if "search_metadata" in content_data:
+                        metadata = content_data["search_metadata"]
+                        search_metadata.update({
+                            "citations": metadata.get("citations", []),
+                            "search_results": metadata.get("search_results", []),
+                            "choices": metadata.get("choices", [])
+                        })
+            except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                 pass
         
-        formatted_message = {
-            "id": msg.id,
-            "agent_id": msg.agent_id,
-            "user_id": msg.user_id,
-            "role": msg.role,
-            "content": content,
-            "model": msg.model,
-            "created_at": msg.created_at,
-            "attachments": [{
-                "id": att.id,
-                "name": att.name,
-                "type": att.type,
-                "url": att.url,
-                "size": att.size
-            } for att in attachments],
-            "references": msg.references or [],
-            "citations": search_metadata["citations"],
-            "search_results": search_metadata["search_results"],
-            "choices": search_metadata["choices"]
-        }
+        formatted_message = ChatMessageResponse(
+            id=msg.id,
+            agent_id=msg.agent_id,
+            user_id=msg.user_id,
+            role=msg.role,
+            content=content,
+            model=msg.model,
+            created_at=msg.created_at,
+            updated_at=msg.updated_at,
+            attachments=attachment_dicts,
+            connected_sources=[ConnectedSource(**source) for source in connected_sources],
+            citations=search_metadata["citations"],
+            search_results=search_metadata["search_results"],
+            choices=search_metadata["choices"]
+        )
         
         formatted_messages.append(formatted_message)
     
@@ -441,87 +505,7 @@ async def clear_chat_history(
     ).delete()
     db.commit()
 
-@router.post("/{agent_id}/generate-image")
-async def generate_image(
-    agent_id: int,
-    prompt: str = Form(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Generate an image using OpenAI DALL-E"""
-    # Check if agent exists and belongs to user
-    agent = db.query(Agent).filter(
-        Agent.id == agent_id,
-        Agent.user_id == current_user.id
-    ).first()
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent not found"
-        )
-
-    # Check if OpenAI API key exists and is valid
-    api_key = db.query(APIKey).filter(
-        APIKey.user_id == current_user.id,
-        APIKey.provider == "openai",
-        APIKey.is_valid == True
-    ).first()
-    
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No valid OpenAI API key found"
-        )
-
-    try:
-        # Save user prompt message first
-        user_message = ChatMessage(
-            agent_id=agent_id,
-            user_id=current_user.id,
-            role="user",
-            content=f"[Image Generation Request] {prompt}",
-            model="dall-e-3"
-        )
-        db.add(user_message)
-        db.commit()
-
-        # Generate image
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key.api_key)
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
-
-        # Save the generated image URL as assistant's response
-        ai_message = ChatMessage(
-            agent_id=agent_id,
-            user_id=current_user.id,
-            role="assistant",
-            content=f"![Generated Image]({response.data[0].url})",
-            model="dall-e-3"
-        )
-        db.add(ai_message)
-        db.commit()
-        db.refresh(ai_message)
-
-        return {
-            "message_id": ai_message.id,
-            "image_url": response.data[0].url,
-            "created_at": ai_message.created_at
-        }
-
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating image: {str(e)}"
-        )
-
-@router.post("/{agent_id}/web-search")
+@router.post("/{agent_id}/web-search", response_model=ChatMessageResponse)
 async def web_search(
     agent_id: int,
     content: str = Form(...),
@@ -586,9 +570,10 @@ async def web_search(
                 "choices": result.get("choices", [])
             }
             
-            # Create a formatted message that includes both the AI response and search metadata
+            # Create a formatted message that includes both the AI response and metadata
             full_content = {
-                "ai_response": ai_content,
+                "content": ai_content,
+                "connected_sources": [],  # Web search doesn't use connected sources
                 "search_metadata": search_metadata
             }
 
@@ -604,14 +589,23 @@ async def web_search(
         db.commit()
         db.refresh(ai_message)
 
-        return {
-            "message_id": ai_message.id,
-            "content": ai_content,
-            "created_at": ai_message.created_at,
-            "citations": result.get("citations", []),
-            "search_results": result.get("search_results", []),
-            "choices": result.get("choices", [])
-        }
+        # Format the response using ChatMessageResponse model
+        content_data = json.loads(ai_message.content)
+        return ChatMessageResponse(
+            id=ai_message.id,
+            agent_id=ai_message.agent_id,
+            user_id=ai_message.user_id,
+            role=ai_message.role,
+            content=content_data.get("content", ai_message.content),
+            model=ai_message.model,
+            created_at=ai_message.created_at,
+            updated_at=ai_message.updated_at,
+            attachments=[],  # No attachments for web search response
+            connected_sources=content_data.get("connected_sources", []),
+            citations=search_metadata.get("citations", []),
+            search_results=search_metadata.get("search_results", []),
+            choices=search_metadata.get("choices", [])
+        )
 
     except Exception as e:
         db.rollback()
