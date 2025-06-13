@@ -21,6 +21,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from typing import List, Dict, Any, Callable
 import os
 from pathlib import Path
+from urllib.parse import urlparse
+from typing import List, Dict, Any, Callable, Union
 
 class DataSourceLoader:
     def __init__(self, source_type: str, connection_settings: Dict[str, Any]):
@@ -42,6 +44,19 @@ class DataSourceLoader:
             for doc in splits
         ]
             
+    def _validate_url(self, url: str) -> str:
+        """Validate and format URL to ensure it has a proper scheme."""
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            # If no scheme is provided, prepend https://
+            url = f"https://{url}"
+            parsed = urlparse(url)
+        
+        if not parsed.netloc:
+            raise ValueError(f"Invalid URL format: {url}")
+            
+        return url
+
     async def _load_documents(self):
         if self.source_type == "file_upload":
             return await self._load_file_upload()
@@ -103,11 +118,39 @@ class DataSourceLoader:
                 object_ids=self.connection_settings.get("object_ids")
             ).load()
         elif self.source_type == "web_scraper":
-            return WebBaseLoader(
-                web_paths=self.connection_settings["urls"],
-                requests_per_second=self.connection_settings.get("requests_per_second"),
-                browser_session_options=self.connection_settings.get("browser_session_options", {})
-            ).load()
+            urls = self.connection_settings["urls"]
+            if isinstance(urls, str):
+                urls = [urls]
+            
+            # Validate and format all URLs
+            validated_urls = []
+            total_size = 0
+            document_count = 0
+            
+            for url in urls:
+                try:
+                    validated_url = self._validate_url(url)
+                    validated_urls.append(validated_url)
+                except ValueError as e:
+                    raise ValueError(f"Invalid URL in web scraper configuration: {str(e)}")
+            
+            # Load documents and track size
+            loader = WebBaseLoader(
+                web_paths=validated_urls,
+                requests_per_second=self.connection_settings.get("requests_per_second")
+            )
+            documents = loader.load()
+            
+            # Calculate size and document count
+            for doc in documents:
+                total_size += len(doc.page_content.encode('utf-8'))
+                document_count += 1
+            
+            # Update connection settings with size information
+            self.connection_settings["file_size"] = total_size
+            self.connection_settings["document_count"] = document_count
+            
+            return documents
         elif self.source_type == "snowflake":
             return SnowflakeLoader(
                 query=self.connection_settings["query"],

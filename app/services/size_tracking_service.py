@@ -280,6 +280,8 @@ class WebScraperSizeCalculator(BaseSizeCalculator):
     async def calculate_size(self, settings: Dict[str, Any]) -> Dict[str, int]:
         try:
             urls = settings.get("urls", [])
+            if isinstance(urls, str):
+                urls = [urls]
             
             if not urls:
                 return await super().calculate_size(settings)
@@ -287,19 +289,33 @@ class WebScraperSizeCalculator(BaseSizeCalculator):
             total_size = 0
             doc_count = 0
             
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            
             async with aiohttp.ClientSession() as session:
                 for url in urls:
-                    async with session.get(url) as response:
-                        if response.status == 200:
-                            content = await response.text()
-                            total_size += len(content.encode('utf-8'))
-                            doc_count += 1
+                    try:
+                        async with session.get(url, headers=headers, timeout=30) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                content_size = len(content.encode('utf-8'))
+                                total_size += content_size
+                                doc_count += 1
+                    except Exception as e:
+                        print(f"Error fetching URL {url}: {str(e)}")
+                        continue
+
+            # If we couldn't fetch any content successfully, return default
+            if doc_count == 0:
+                return await super().calculate_size(settings)
 
             return {
                 "raw_size_bytes": total_size,
                 "document_count": doc_count
             }
-        except Exception:
+        except Exception as e:
+            print(f"Error in WebScraperSizeCalculator: {str(e)}")
             return await super().calculate_size(settings)
 
 class SnowflakeSizeCalculator(BaseSizeCalculator):
