@@ -169,23 +169,70 @@ async def create_message(
         # Initialize VectorService and search similar content
         vector_service = VectorService(current_user.id)
         
-        # Prepare the final response content
+        # Prepare the final response content and references
         response_content = ""
-        used_sources = set()  # Track which sources were actually used
-        source_mapping = {
-            source.table_name: {
-                "id": source.id,
-                "name": source.name,
-                "type": source.source_type
-            } for source in available_sources
-        }
+        similar_results = []
 
-        # First, check if this is a document summary request with attachments
-        is_summary_request = any(word in content.lower() for word in ["summarize", "summary", "summarization", "explain"])
-        has_attachments = len(file_attachments) > 0
+        # Search through connected vector sources only
+        for vector_source in available_sources:
+            try:
+                results = await vector_service.search_similar(
+                    query=content,
+                    source_name=vector_source.table_name,
+                    embedding_model=vector_source.embedding_model,
+                    api_key=openai_api_key.api_key
+                )
+                # Add source information to results
+                for result in results:
+                    result['source_name'] = vector_source.name
+                    result['table_name'] = vector_source.table_name
+                    result['is_connected'] = True  # All sources are now connected by definition
+                similar_results.extend(results)
+            except Exception as e:
+                print(f"Error searching vector source {vector_source.name}: {str(e)}")
+                continue
 
-        if has_attachments and is_summary_request:
-            # Handle document summary request
+        # Format the response with similar content if results found
+        if similar_results:
+            # Sort results by relevance score
+            similar_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            message_from_vector = ""
+            connected_sources = []
+            # Create a mapping of table_name to source info
+            source_mapping = {
+                source.table_name: {
+                    "id": source.id,
+                    "name": source.name,
+                    "type": source.source_type
+                } for source in available_sources
+            }
+            
+            for result in similar_results:
+                message_from_vector += f"[From {result['source_name']}]: {result['content']}\n"
+                source_info = source_mapping.get(result['table_name'])
+                if source_info and source_info["id"] not in [s.get("id") for s in connected_sources]:
+                    connected_sources.append(source_info)
+            
+            conversation = {
+                "messages": message_from_vector,
+                "agent_instructions": agent.instructions,
+                "model": model,
+                "provider": model_setting.provider,
+                "api_key": api_key.api_key,
+                "attachments": file_attachments,
+                "query": content
+            }
+            response_content = await get_ai_response_from_vectorstore(conversation)
+
+            # Add connected sources to the response
+            response_content = {
+                "content": response_content,
+                "connected_sources": connected_sources
+            }
+        
+        # If no results found in vector search
+        if not response_content:
             conversation = {
                 "messages": formatted_messages,
                 "agent_instructions": agent.instructions,
@@ -195,108 +242,115 @@ async def create_message(
                 "attachments": file_attachments
             }
             response_content = await get_ai_response_from_model(conversation)
-            # Don't include connected_sources for document summary
-            final_response = {
-                "content": response_content
+            response_content = {
+                "content": response_content,
+                "connected_sources": []
             }
-        else:
-            # Search through connected vector sources
-            similar_results = []
-            for vector_source in available_sources:
-                try:
-                    results = await vector_service.search_similar(
-                        query=content,
-                        source_name=vector_source.table_name,
-                        embedding_model=vector_source.embedding_model,
-                        api_key=openai_api_key.api_key
-                    )
-                    # Add source information to results
-                    for result in results:
-                        result['source_name'] = vector_source.name
-                        result['table_name'] = vector_source.table_name
-                    similar_results.extend(results)
-                except Exception as e:
-                    print(f"Error searching vector source {vector_source.name}: {str(e)}")
-                    continue
 
-            # Format the response with similar content if results found
-            if similar_results:
-                # Sort results by relevance score
-                similar_results.sort(key=lambda x: x.get('score', 0), reverse=True)
-                
-                message_from_vector = ""
-                for result in similar_results:
-                    if result.get('score', 0) > 0.7:  # Only include highly relevant results
-                        message_from_vector += f"[From {result['source_name']}]: {result['content']}\n"
-                        source_info = source_mapping.get(result['table_name'])
-                        if source_info:
-                            used_sources.add(json.dumps(source_info))
-                
-                if message_from_vector:  # Only if we actually used some vector content
-                    conversation = {
-                        "messages": message_from_vector,
-                        "agent_instructions": agent.instructions,
-                        "model": model,
-                        "provider": model_setting.provider,
-                        "api_key": api_key.api_key,
-                        "attachments": file_attachments,
-                        "query": content
-                    }
-                    response_content = await get_ai_response_from_vectorstore(conversation)
-                    # Include connected_sources since we used vector content
-                    final_response = {
-                        "content": response_content,
-                        "connected_sources": [json.loads(s) for s in used_sources]
-                    }
-                else:
-                    # No relevant vector content found, use regular conversation
-                    conversation = {
-                        "messages": formatted_messages,
-                        "agent_instructions": agent.instructions,
-                        "model": model,
-                        "provider": model_setting.provider,
-                        "api_key": api_key.api_key,
-                        "attachments": file_attachments
-                    }
-                    response_content = await get_ai_response_from_model(conversation)
-                    # Don't include connected_sources since we didn't use vector content
-                    final_response = {
-                        "content": response_content
-                    }
-            else:
-                # No vector search results, use regular conversation
-                conversation = {
-                    "messages": formatted_messages,
-                    "agent_instructions": agent.instructions,
-                    "model": model,
-                    "provider": model_setting.provider,
-                    "api_key": api_key.api_key,
-                    "attachments": file_attachments
-                }
-                response_content = await get_ai_response_from_model(conversation)
-                # Don't include connected_sources since we didn't use vector content
-                final_response = {
-                    "content": response_content
-                }
-
-            # Handle file generation if needed
-            if not response_content:
-                is_file_request = (
-                    any(keyword in content.lower() for keyword in ["provide", "generate", "create", "download", "export", "save", "convert"]) and
-                    any(ftype in content.lower() for ftype in ["csv", "pdf", "doc", "docx", "document"]) and
-                    not is_summary_request
+        # Check if this is a file generation request
+        file_keywords = ["provide", "generate", "create", "download", "export", "save", "convert"]
+        file_types = ["csv", "pdf", "doc", "docx", "document"]
+        
+        is_file_request = (
+            any(keyword in content.lower() for keyword in file_keywords) and
+            any(ftype in content.lower() for ftype in file_types)
+        )
+        
+        if is_file_request:
+            # Determine file type based on content
+            file_type = None
+            if "csv" in content.lower():
+                file_type = "csv"
+            elif "pdf" in content.lower():
+                file_type = "pdf"
+            elif any(doc_type in content.lower() for doc_type in ["doc", "docx", "document"]):
+                file_type = "doc"
+            
+            # Get AI response for file content based on file type
+            if file_type == "pdf":
+                agent_instructions = (
+                    "You are tasked with generating content for a PDF file. Follow these guidelines:\n"
+                    "1. Format the content in a clear, structured way suitable for PDF\n"
+                    "2. Include appropriate headers and sections if relevant\n"
+                    "3. Return ONLY the content, no explanations or markdown\n"
+                    "4. Ensure proper spacing between sections\n"
+                    "5. Keep the formatting simple and compatible with PDF generation"
                 )
-
-                if is_file_request:
-                    # Handle file generation request
-                    # ... (rest of the file generation code remains the same)
-                    pass
+            elif file_type == "doc":
+                agent_instructions = (
+                    "You are tasked with generating content for a Word document. Follow these guidelines:\n"
+                    "1. Format the content in a clear, structured way suitable for a document\n"
+                    "2. Include appropriate headers and sections if relevant\n"
+                    "3. Return ONLY the content, no explanations or markdown\n"
+                    "4. Ensure proper spacing between sections\n"
+                    "5. Keep the formatting simple and compatible with document generation"
+                )
+            else:  # CSV
+                agent_instructions = (
+                    "You are tasked with generating CSV data. Follow these guidelines:\n"
+                    "1. Return ONLY the raw CSV content\n"
+                    "2. First line should be the header row with column names\n"
+                    "3. Use commas as delimiters\n"
+                    "4. Each record on a new line\n"
+                    "5. No explanations, no code blocks, no markdown\n"
+                    "6. Ensure data is properly formatted and escaped if needed"
+                )
+            
+            conversation = {
+                "messages": formatted_messages,
+                "agent_instructions": agent_instructions,
+                "model": model,
+                "provider": model_setting.provider,
+                "api_key": api_key.api_key
+            }
+            
+            file_content = await get_ai_response_from_model(conversation)
+            
+            # Convert to PDF or DOC if needed
+            clean_content = extract_data_only(file_content, file_type)
+            if file_type == "pdf":
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.set_font("Arial", size=12)
+                for line in clean_content.split('\n'):
+                    pdf.cell(0, 10, line, ln=True)
+                pdf_bytes = pdf.output(dest='S').encode('latin1')
+                file_content_to_save = base64.b64encode(pdf_bytes).decode('utf-8')
+            elif file_type == "doc":
+                import io
+                doc = Document()
+                for line in clean_content.split('\n'):
+                    doc.add_paragraph(line)
+                doc_io = io.BytesIO()
+                doc.save(doc_io)
+                doc_bytes = doc_io.getvalue()
+                file_content_to_save = base64.b64encode(doc_bytes).decode('utf-8')
+            else:
+                file_content_to_save = clean_content  # CSV stays as plain text
+            
+            # Create a unique filename
+            file_name = f"generated_{uuid.uuid4().hex[:8]}.{file_type}"
+            
+            # Create FileOutput record
+            file_output = FileOutput(
+                message_id=user_message.id,
+                name=file_name,
+                type=file_type,
+                content=file_content_to_save
+            )
+            db.add(file_output)
+            db.commit()
+            db.refresh(file_output)
+            
+            # Create assistant message with download link
+            response_content = f"I've generated the {file_type.upper()} file for you. You can download it using this link: [Download {file_name}](/download/{file_output.id})"
 
         ai_message = ChatMessage(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
-            content=json.dumps(final_response),
+            content=json.dumps(response_content),  # Store the complete content as JSON
             model=model
         )
         db.add(ai_message)
