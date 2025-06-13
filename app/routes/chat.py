@@ -81,6 +81,21 @@ async def create_message(
         VectorSource.id.in_(agent.vector_sources_ids or [])  # Only get connected sources
     ).all()
 
+    # Parse mentioned knowledge bases from the content
+    mentioned_sources = []
+    source_name_to_obj = {source.name: source for source in available_sources}
+    
+    # Extract knowledge base mentions (format: /knowledge_base_name)
+    import re
+    mentions = re.findall(r'/(\w+)', content)
+    for mention in mentions:
+        if mention in source_name_to_obj:
+            mentioned_sources.append(source_name_to_obj[mention])
+    
+    # If there are mentions, only search in mentioned sources
+    # Otherwise, fall back to all available sources
+    search_sources = mentioned_sources if mentioned_sources else available_sources
+
     # Check if requested model is enabled
     model_setting = db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id,
@@ -197,9 +212,9 @@ async def create_message(
             
             # If there are connected sources and it's not explicitly a summary request,
             # include vector search results as additional context
-            if available_sources and not is_summary_request:
+            if search_sources and not is_summary_request:
                 similar_results = []
-                for vector_source in available_sources:
+                for vector_source in search_sources:
                     try:
                         results = await vector_service.search_similar(
                             query=content,
@@ -238,8 +253,8 @@ async def create_message(
         else:
             # No attachments - handle normal vector search or model response
             similar_results = []
-            if available_sources:
-                for vector_source in available_sources:
+            if search_sources:  # Use search_sources instead of available_sources
+                for vector_source in search_sources:
                     try:
                         results = await vector_service.search_similar(
                             query=content,
