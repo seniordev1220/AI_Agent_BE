@@ -263,7 +263,7 @@ async def create_message(
             }
 
         # Check if this is a file generation request
-        file_keywords = ["provide", "generate", "create", "download", "export", "save", "convert"]
+        file_keywords = ["provide", "generate", "create", "download", "export", "save", "convert", "give me", "create a", "generate a"]
         file_types = ["csv", "pdf", "doc", "docx", "document"]
         
         is_file_request = (
@@ -281,35 +281,69 @@ async def create_message(
             elif any(doc_type in content.lower() for doc_type in ["doc", "docx", "document"]):
                 file_type = "doc"
             
+            # Extract the actual request from the user's message
+            # Remove file type and generation keywords to get the core request
+            core_request = content.lower()
+            for keyword in file_keywords + file_types:
+                core_request = core_request.replace(keyword, "")
+            core_request = core_request.strip()
+            
             # Get AI response for file content based on file type
             if file_type == "pdf":
                 agent_instructions = (
-                    "You are tasked with generating content for a PDF file. Follow these guidelines:\n"
-                    "1. Format the content in a clear, structured way suitable for PDF\n"
-                    "2. Include appropriate headers and sections if relevant\n"
-                    "3. Return ONLY the content, no explanations or markdown\n"
-                    "4. Ensure proper spacing between sections\n"
-                    "5. Keep the formatting simple and compatible with PDF generation"
+                    f"You are tasked with generating a PDF document about: {core_request}\n\n"
+                    "Follow these guidelines:\n"
+                    "1. Focus ONLY on the specific information requested\n"
+                    "2. Format the content in a clear, structured way suitable for PDF\n"
+                    "3. Include a title that reflects the specific request\n"
+                    "4. Organize content with appropriate headers and sections\n"
+                    "5. Return ONLY the content, no explanations or markdown\n"
+                    "6. Ensure proper spacing between sections\n"
+                    "7. Keep the formatting simple and compatible with PDF generation\n"
+                    "8. Start with the most relevant information first\n"
+                    "9. Use clear section headers ending with ':' for better formatting"
                 )
             elif file_type == "doc":
                 agent_instructions = (
-                    "You are tasked with generating content for a Word document. Follow these guidelines:\n"
-                    "1. Format the content in a clear, structured way suitable for a document\n"
-                    "2. Include appropriate headers and sections if relevant\n"
-                    "3. Return ONLY the content, no explanations or markdown\n"
-                    "4. Ensure proper spacing between sections\n"
-                    "5. Keep the formatting simple and compatible with document generation"
+                    f"You are tasked with generating a Word document about: {core_request}\n\n"
+                    "Follow these guidelines:\n"
+                    "1. Focus ONLY on the specific information requested\n"
+                    "2. Format the content in a clear, structured way suitable for a document\n"
+                    "3. Include a title that reflects the specific request\n"
+                    "4. Organize content with appropriate headers and sections\n"
+                    "5. Return ONLY the content, no explanations or markdown\n"
+                    "6. Ensure proper spacing between sections\n"
+                    "7. Keep the formatting simple and compatible with document generation\n"
+                    "8. Start with the most relevant information first\n"
+                    "9. Use clear section headers ending with ':' for better formatting"
                 )
             else:  # CSV
                 agent_instructions = (
-                    "You are tasked with generating CSV data. Follow these guidelines:\n"
-                    "1. Return ONLY the raw CSV content\n"
-                    "2. First line should be the header row with column names\n"
-                    "3. Use commas as delimiters\n"
-                    "4. Each record on a new line\n"
-                    "5. No explanations, no code blocks, no markdown\n"
-                    "6. Ensure data is properly formatted and escaped if needed"
+                    f"You are tasked with generating CSV data about: {core_request}\n\n"
+                    "Follow these guidelines:\n"
+                    "1. Focus ONLY on the specific information requested\n"
+                    "2. Return the data in this format:\n"
+                    "   ```json\n"
+                    "   [\n"
+                    "     {\n"
+                    "       \"column1\": \"value1\",\n"
+                    "       \"column2\": \"value2\"\n"
+                    "     }\n"
+                    "   ]\n"
+                    "   ```\n"
+                    "3. Use clear, descriptive column names\n"
+                    "4. Include all relevant data fields\n"
+                    "5. Ensure data is properly structured and consistent\n"
+                    "6. Return ONLY the JSON array, no explanations\n"
+                    "7. Make sure all records follow the same schema\n"
+                    "8. Use proper data types for each field"
                 )
+            
+            # Add the original user message for context
+            formatted_messages.append({
+                "role": "user",
+                "content": f"Original request: {content}\nCore request: {core_request}"
+            })
             
             conversation = {
                 "messages": formatted_messages,
@@ -325,24 +359,84 @@ async def create_message(
             clean_content = extract_data_only(file_content, file_type)
             if file_type == "pdf":
                 pdf = FPDF()
-                pdf.add_page()
                 pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.add_page()
+                
+                # Extract title from content or use a default
+                title = core_request.title()
+                content_lines = clean_content.split('\n')
+                if content_lines and not content_lines[0].endswith(':'):
+                    title = content_lines[0]
+                    content_lines = content_lines[1:]
+                
+                # Add title with larger font
+                pdf.set_font("Arial", 'B', 14)
+                pdf.cell(0, 10, title, ln=True, align='C')
+                pdf.ln(10)
+                
+                # Add content with regular font
                 pdf.set_font("Arial", size=12)
-                for line in clean_content.split('\n'):
-                    pdf.cell(0, 10, line, ln=True)
+                for line in content_lines:
+                    if line.strip():  # Skip empty lines
+                        if line.strip().endswith(':'):  # Treat as section header
+                            pdf.ln(5)
+                            pdf.set_font("Arial", 'B', 12)
+                            pdf.cell(0, 10, line, ln=True)
+                            pdf.set_font("Arial", size=12)
+                        else:
+                            pdf.multi_cell(0, 8, line)
+                
                 pdf_bytes = pdf.output(dest='S').encode('latin1')
                 file_content_to_save = base64.b64encode(pdf_bytes).decode('utf-8')
+            
             elif file_type == "doc":
-                import io
                 doc = Document()
-                for line in clean_content.split('\n'):
-                    doc.add_paragraph(line)
+                
+                # Extract title from content or use a default
+                title = core_request.title()
+                content_lines = clean_content.split('\n')
+                if content_lines and not content_lines[0].endswith(':'):
+                    title = content_lines[0]
+                    content_lines = content_lines[1:]
+                
+                # Add title
+                doc.add_heading(title, level=1)
+                
+                # Add content with proper formatting
+                for line in content_lines:
+                    if line.strip():  # Skip empty lines
+                        if line.strip().endswith(':'):  # Treat as section header
+                            doc.add_heading(line, level=2)
+                        else:
+                            doc.add_paragraph(line)
+                
                 doc_io = io.BytesIO()
                 doc.save(doc_io)
                 doc_bytes = doc_io.getvalue()
                 file_content_to_save = base64.b64encode(doc_bytes).decode('utf-8')
-            else:
-                file_content_to_save = clean_content  # CSV stays as plain text
+            
+            else:  # CSV
+                try:
+                    # Try to parse as JSON first (in case AI returned structured data)
+                    try:
+                        data = json.loads(clean_content)
+                        if isinstance(data, list) and len(data) > 0:
+                            # If it's a list of dictionaries, convert to CSV
+                            output = io.StringIO()
+                            writer = csv.DictWriter(output, fieldnames=data[0].keys())
+                            writer.writeheader()
+                            writer.writerows(data)
+                            file_content_to_save = output.getvalue()
+                        else:
+                            file_content_to_save = clean_content
+                    except json.JSONDecodeError:
+                        # If not JSON, use the cleaned content directly
+                        file_content_to_save = clean_content
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Error processing CSV content: {str(e)}"
+                    )
             
             # Create a unique filename
             file_name = f"generated_{uuid.uuid4().hex[:8]}.{file_type}"
@@ -365,7 +459,10 @@ async def create_message(
             agent_id=agent_id,
             user_id=current_user.id,
             role="assistant",
-            content=json.dumps(response_content),  # Store the complete content as JSON
+            content=json.dumps({
+                "content": response_content,
+                "connected_sources": []
+            }) if isinstance(response_content, str) else json.dumps(response_content),  # Store the complete content as JSON
             model=model
         )
         db.add(ai_message)
@@ -373,18 +470,25 @@ async def create_message(
         db.refresh(ai_message)
 
         # Format the response using ChatMessageResponse model
-        content_data = json.loads(ai_message.content)
+        try:
+            content_data = json.loads(ai_message.content)
+            response_content = content_data.get("content", ai_message.content)
+            connected_sources = content_data.get("connected_sources", [])
+        except (json.JSONDecodeError, AttributeError):
+            response_content = ai_message.content
+            connected_sources = []
+
         return ChatMessageResponse(
             id=ai_message.id,
             agent_id=ai_message.agent_id,
             user_id=ai_message.user_id,
             role=ai_message.role,
-            content=content_data.get("content", ai_message.content),
+            content=response_content,
             model=ai_message.model,
             created_at=ai_message.created_at,
             updated_at=ai_message.updated_at,
             attachments=[],  # No attachments for AI response
-            connected_sources=content_data.get("connected_sources", []),
+            connected_sources=connected_sources,
             citations=[],
             search_results=[],
             choices=[]
@@ -706,23 +810,46 @@ def extract_data_only(text, file_type="csv"):
         str: Cleaned content suitable for the specified file type
     """
     import re
+    import json
     
-    # Remove any markdown code blocks
-    text = re.sub(r'```[a-zA-Z]*\n([\s\S]*?)```', r'\1', text)
+    # First try to extract content from code blocks
+    code_block_pattern = r'```(?:json|python)?\n([\s\S]*?)```'
+    code_blocks = re.findall(code_block_pattern, text)
     
+    if code_blocks:
+        # If we found code blocks, use the first one that contains valid data
+        for block in code_blocks:
+            if file_type == "csv":
+                # For CSV, try to parse as JSON first
+                try:
+                    data = json.loads(block)
+                    if isinstance(data, list) and len(data) > 0:
+                        return json.dumps(data)  # Return JSON string for later processing
+                except json.JSONDecodeError:
+                    # If not JSON, check if it looks like CSV
+                    if ',' in block and '\n' in block:
+                        return block.strip()
+            else:
+                # For PDF/DOC, look for text content
+                if block.strip() and not block.startswith('import '):
+                    return block.strip()
+    
+    # If no suitable code blocks found, process the entire text
     if file_type == "csv":
-        # Find CSV-like content (lines with commas)
+        # Try to find CSV-like content (lines with commas)
         lines = text.splitlines()
         csv_lines = []
         for line in lines:
             # Skip empty lines and lines that look like explanations
-            if line.strip() and ',' in line and not line.startswith(('#', '//', '--')):
+            if line.strip() and ',' in line and not line.startswith(('#', '//', '--', '```')):
                 csv_lines.append(line.strip())
         return '\n'.join(csv_lines)
     
     else:  # pdf or doc
-        # Remove common markdown and code formatting
-        text = re.sub(r'[`*_#]', '', text)  # Remove markdown characters
+        # Remove markdown and code formatting
+        text = re.sub(r'```[a-zA-Z]*\n[\s\S]*?```', '', text)  # Remove code blocks
+        text = re.sub(r'[`*_]', '', text)  # Remove markdown characters
+        text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)  # Remove markdown headers
         text = re.sub(r'\n{3,}', '\n\n', text)  # Normalize multiple newlines
         text = re.sub(r'^\s*[-+*]\s', '', text, flags=re.MULTILINE)  # Remove list markers
         
@@ -731,7 +858,7 @@ def extract_data_only(text, file_type="csv"):
         clean_lines = []
         for line in lines:
             line = line.strip()
-            if line and not line.startswith(('//', '--', '#')):  # Skip comments
+            if line and not line.startswith(('//', '--', '#', '```')):
                 clean_lines.append(line)
         
         return '\n'.join(clean_lines) 
