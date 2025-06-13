@@ -60,10 +60,17 @@ async def create_message(
     content: str = Form(...),
     model: str = Form(...),
     files: List[UploadFile] = File(default=[]),
+    source_ids: str = Form(default="[]"),  # Add source_ids parameter
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Create a new chat message and get AI response"""
+    # Parse source_ids from JSON string
+    try:
+        selected_source_ids = json.loads(source_ids)
+    except json.JSONDecodeError:
+        selected_source_ids = []
+
     # Check if agent exists and belongs to user
     agent = db.query(Agent).filter(
         Agent.id == agent_id,
@@ -75,11 +82,19 @@ async def create_message(
             detail="Agent not found"
         )
 
-    # Get all available vector sources for the user
-    available_sources = db.query(VectorSource).filter(
-        VectorSource.user_id == current_user.id,
-        VectorSource.id.in_(agent.vector_sources_ids or [])  # Only get connected sources
-    ).all()
+    # Get available vector sources based on selection or agent's sources
+    if selected_source_ids:
+        # If specific sources are selected, only use those
+        available_sources = db.query(VectorSource).filter(
+            VectorSource.user_id == current_user.id,
+            VectorSource.id.in_(selected_source_ids)
+        ).all()
+    else:
+        # Otherwise use all connected sources from the agent
+        available_sources = db.query(VectorSource).filter(
+            VectorSource.user_id == current_user.id,
+            VectorSource.id.in_(agent.vector_sources_ids or [])
+        ).all()
 
     # Check if requested model is enabled
     model_setting = db.query(ModelSettings).filter(
