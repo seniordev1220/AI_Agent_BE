@@ -22,3 +22,5 @@ class User(Base):
     model_settings = relationship("ModelSettings", back_populates="user")
     data_sources = relationship("DataSource", back_populates="user")
     vector_sources = relationship("VectorSource", back_populates="user")
+    subscription = relationship("Subscription", back_populates="user", uselist=False)  # One-to-one relationship
+    payments = relationship("Payment", back_populates="user")
