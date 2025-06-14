@@ -8,11 +8,20 @@ from ..models.user import User
 from ..utils.password import verify_password, get_password_hash
 from ..utils.auth import create_access_token
 from ..config import config
+from ..services.settings import SettingsService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/signup", response_model=UserResponse)
 def signup(user: UserCreate, db: Session = Depends(get_db)):
+    # Check if email login is enabled
+    auth_settings = SettingsService.get_auth_settings(db)
+    if auth_settings and not auth_settings.email_login_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email registration is disabled. Please use SSO.",
+        )
+
     # Check if user exists
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
@@ -38,6 +47,14 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # Check if email login is enabled
+    auth_settings = SettingsService.get_auth_settings(db)
+    if auth_settings and not auth_settings.email_login_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email login is disabled. Please use SSO.",
+        )
+
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(

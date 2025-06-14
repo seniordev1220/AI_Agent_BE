@@ -1,14 +1,15 @@
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments
+from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings
 from .database import engine
-from .models import user
+from .models import user, settings as settings_model
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
 # Create database tables
 user.Base.metadata.create_all(bind=engine)
+settings_model.Base.metadata.create_all(bind=engine)
 
 origins = [
     "http://localhost:3000",
@@ -41,6 +42,7 @@ app.include_router(model_settings.router)
 app.include_router(data_source.router)
 app.include_router(dashboard.router)
 app.include_router(payments.router)
+app.include_router(settings.router)
 
 @app.get("/")
 def root():
