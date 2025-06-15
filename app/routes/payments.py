@@ -192,7 +192,7 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
             user_id=user.id,
             subscription_id=subscription.id,
             stripe_payment_id=session.invoice or session.payment_intent,
-            amount=session.amount_total / 100 if session.amount_total else 0,
+            amount=session.amount_total if session.amount_total else 0,
             currency=session.currency.lower() if session.currency else 'usd',
             status=session.payment_status,
             payment_method='card'
