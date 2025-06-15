@@ -28,6 +28,12 @@ class Agent(Base):
     vector_sources_ids = Column(ARRAY(Integer), default=[])
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Widget-related fields
+    greeting = Column(Text, nullable=True)  # Custom greeting message for the widget
+    theme = Column(String, default="light")  # Widget theme (light/dark)
+    widget_enabled = Column(Boolean, default=True)  # Whether the widget is enabled
+    allowed_domains = Column(ARRAY(String), default=[])  # List of domains where the widget can be embedded
 
     # Relationships
     user = relationship("User", back_populates="agents")

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional
 from ..database import get_db
@@ -862,3 +862,77 @@ def extract_data_only(text, file_type="csv"):
                 clean_lines.append(line)
         
         return '\n'.join(clean_lines) 
+
+@router.get("/widget/{agent_id}/config")
+async def get_widget_config(
+    agent_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get widget configuration for the specified agent"""
+    # Get agent details
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found"
+        )
+
+    # Get the origin domain
+    origin = request.headers.get("origin", "")
+    
+    # Check if the origin is allowed (you may want to implement more strict checks)
+    if origin not in origins:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin not allowed"
+        )
+
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "greeting": agent.greeting or "Hello! How can I help you today?",
+        "theme": agent.theme or "light",
+        "position": "bottom-right",  # Default position
+        "height": "600px",
+        "width": "400px"
+    }
+
+@router.get("/widget/{agent_id}/embed")
+async def get_widget_embed(
+    agent_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get the HTML embed code for the chat widget"""
+    # Get agent details
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found"
+        )
+
+    # Base URL for the widget
+    base_url = str(request.base_url).rstrip('/')
+    
+    # Generate the widget HTML
+    widget_html = f"""
+    <div id="finiite-chat-widget"></div>
+    <script>
+        (function() {{
+            var script = document.createElement('script');
+            script.src = '{base_url}/static/widget.js';
+            script.async = true;
+            script.onload = function() {{
+                initFiniiteWidget({{
+                    agentId: '{agent_id}',
+                    baseUrl: '{base_url}'
+                }});
+            }};
+            document.head.appendChild(script);
+        }})();
+    </script>
+    """
+    
+    return HTMLResponse(content=widget_html) 
