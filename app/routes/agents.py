@@ -33,8 +33,7 @@ async def create_agent(
         )
 
     # Handle vector sources if provided
-    vector_sources_ids = []
-    print(agent_create)
+    vector_source_ids = []  # Initialize the variable
     if agent_create.vector_source_ids:
         try:
             # Get all vector sources that belong to the user
@@ -49,7 +48,7 @@ async def create_agent(
                     detail="One or more vector sources not found or not accessible"
                 )
 
-            vector_source_ids = [vs.id for vs in vector_sources]
+            vector_source_ids = [vs.id for vs in vector_sources]  # Update the initialized variable
 
         except Exception as e:
             print(f"Error validating vector sources: {str(e)}")
@@ -63,7 +62,7 @@ async def create_agent(
         description=agent_create.description,
         instructions=agent_create.instructions,
         user_id=current_user.id,
-        vector_sources_ids=vector_source_ids,  # Use validated vector sources IDs
+        vector_sources_ids=vector_source_ids,  # Use the initialized variable
         base_model=agent_create.base_model,
         is_private=agent_create.is_private,
         welcome_message=agent_create.welcome_message,
@@ -106,16 +105,16 @@ async def create_agent(
     db.refresh(db_agent)
 
     # Set up vector source relationships after agent is created
-    if vector_sources_ids:
+    if vector_source_ids:
         try:
             # Associate vector sources with agent using the relationship
             vector_sources = db.query(VectorSource).filter(
-                VectorSource.id.in_(vector_sources_ids)
+                VectorSource.id.in_(vector_source_ids)
             ).all()
             db_agent.vector_sources = vector_sources
             
             # Make sure the vector_sources_ids array is set
-            db_agent.vector_sources_ids = vector_sources_ids
+            db_agent.vector_sources_ids = vector_source_ids
             
             db.commit()
             db.refresh(db_agent)

@@ -134,6 +134,7 @@ async def create_checkout_session(
 @router.get("/session/{session_id}")
 async def get_session(
     session_id: str,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
@@ -268,6 +269,7 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
 @router.post("/retrieve-checkout-session")
 async def retrieve_checkout_session(
     request: RetrieveSessionRequest,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
