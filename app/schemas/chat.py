@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 
 class FileType(str, Enum):
@@ -14,6 +14,7 @@ class ConnectedSource(BaseModel):
     id: int
     name: str
     type: str
+    connection_settings: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True

@@ -219,7 +219,8 @@ async def create_message(
                 source.table_name: {
                     "id": source.id,
                     "name": source.name,
-                    "type": source.source_type
+                    "type": source.source_type,
+                    "connection_settings": source.connection_settings
                 } for source in available_sources
             }
             
@@ -573,7 +574,14 @@ async def get_chat_history(
                             connected_sources = sources_data
                         else:
                             # Handle case where it's a list of IDs
-                            source_id_to_info = {s.id: {"id": s.id, "name": s.name, "type": s.source_type} for s in vector_sources}
+                            source_id_to_info = {
+                                s.id: {
+                                    "id": s.id,
+                                    "name": s.name,
+                                    "type": s.source_type,
+                                    "connection_settings": s.connection_settings
+                                } for s in vector_sources
+                            }
                             connected_sources = [
                                 source_id_to_info[sid]
                                 for sid in sources_data

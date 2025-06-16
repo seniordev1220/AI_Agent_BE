@@ -23,6 +23,8 @@ from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 from ..services.vector_service import VectorService
 import uuid
+from fastapi.responses import StreamingResponse, FileResponse
+import mimetypes
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
@@ -395,4 +397,65 @@ async def connect_salesforce(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error connecting to Salesforce: {str(e)}"
+        )
+
+@router.get("/{data_source_id}/content")
+async def get_data_source_content(
+    data_source_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Get data source
+    data_source = db.query(VectorSource).filter(
+        VectorSource.id == data_source_id,
+        VectorSource.user_id == current_user.id
+    ).first()
+    
+    if not data_source:
+        raise HTTPException(status_code=404, detail="Data source not found")
+    
+    try:
+        # Handle file upload type
+        if data_source.source_type == "file_upload":
+            file_path = data_source.connection_settings.get("file_path")
+            if not file_path or not os.path.exists(file_path):
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            # Get file mime type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                mime_type = "application/octet-stream"
+            
+            # Get original filename
+            filename = data_source.connection_settings.get("original_filename", os.path.basename(file_path))
+            
+            # Return file response with inline content disposition for viewing in browser
+            return FileResponse(
+                file_path,
+                media_type=mime_type,
+                filename=filename,
+                headers={
+                    "Content-Disposition": f'inline; filename="{filename}"'
+                }
+            )
+            
+        # Handle web scraper type
+        elif data_source.source_type == "web_scraper":
+            url = data_source.connection_settings.get("url")
+            if not url:
+                raise HTTPException(status_code=404, detail="URL not found")
+            
+            # Return URL for frontend to handle
+            return {"url": url}
+            
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Content viewing not supported for source type: {data_source.source_type}"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving data source content: {str(e)}"
         )
