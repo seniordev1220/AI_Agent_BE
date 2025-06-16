@@ -87,3 +87,4 @@ dmypy.json
 # local folder
 uploads/
 pgvector/
+static/avatars/
