@@ -29,6 +29,7 @@ import io
 from ..models.chat import FileAttachment
 from fpdf import FPDF
 from docx import Document
+from ..utils.activity_logger import log_activity
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -60,12 +61,12 @@ async def create_message(
     content: str = Form(...),
     model: str = Form(...),
     files: List[UploadFile] = File(default=[]),
-    source_ids: str = Form(default="[]"),  # Add source_ids parameter
+    source_ids: str = Form(default="[]"),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Create a new chat message and get AI response"""
-    # Parse source_ids from JSON string
     try:
         selected_source_ids = json.loads(source_ids)
     except json.JSONDecodeError:
@@ -82,15 +83,13 @@ async def create_message(
             detail="Agent not found"
         )
 
-    # Get available vector sources based on selection or agent's sources
+    # Get available vector sources
     if selected_source_ids:
-        # If specific sources are selected, only use those
         available_sources = db.query(VectorSource).filter(
             VectorSource.user_id == current_user.id,
             VectorSource.id.in_(selected_source_ids)
         ).all()
     else:
-        # Otherwise use all connected sources from the agent
         available_sources = db.query(VectorSource).filter(
             VectorSource.user_id == current_user.id,
             VectorSource.id.in_(agent.vector_sources_ids or [])
@@ -135,6 +134,23 @@ async def create_message(
     db.add(user_message)
     db.commit()
     db.refresh(user_message)
+
+    # Log chat activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="chat_message",
+        description=f"Sent message to agent: {agent.name}",
+        request=request,
+        metadata={
+            "agent_id": agent_id,
+            "agent_name": agent.name,
+            "message_id": user_message.id,
+            "model": model,
+            "has_files": len(files) > 0,
+            "sources_count": len(available_sources)
+        }
+    )
 
     # Save file attachments
     file_attachments = []

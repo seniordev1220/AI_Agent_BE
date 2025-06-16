@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from ..database import get_db
@@ -25,6 +25,7 @@ from ..services.vector_service import VectorService
 import uuid
 from fastapi.responses import StreamingResponse, FileResponse
 import mimetypes
+from ..utils.activity_logger import log_activity
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 async def create_data_source(
     data_source: VectorSourceCreate,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     # Initialize vector service with only user_id
@@ -74,6 +76,20 @@ async def create_data_source(
 
         # Track size of the data source
         await size_tracking_service.track_source_size(db_data_source.id)
+
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            activity_type="data_source_create",
+            description=f"Created data source: {data_source.name}",
+            request=request,
+            metadata={
+                "data_source_id": db_data_source.id,
+                "source_type": data_source.source_type,
+                "name": data_source.name
+            }
+        )
 
         return db_data_source
         
@@ -137,6 +153,7 @@ async def update_data_source(
 async def delete_data_source(
     data_source_id: int,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     # Initialize vector service with only user_id
@@ -166,6 +183,23 @@ async def delete_data_source(
         db.delete(data_source)
         db.commit()
         
+        # Store info for activity log
+        source_info = {
+            "data_source_id": data_source.id,
+            "name": data_source.name,
+            "source_type": data_source.source_type
+        }
+
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            activity_type="data_source_delete",
+            description=f"Deleted data source: {source_info['name']}",
+            request=request,
+            metadata=source_info
+        )
+        
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -177,11 +211,27 @@ async def delete_data_source(
 async def upload_file(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):    
     try:
         file_service = FileUploadService(db)
         data_source = await file_service.process_upload(file, current_user.id)
+
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            activity_type="data_source_upload",
+            description=f"Uploaded file: {file.filename}",
+            request=request,
+            metadata={
+                "file_name": file.filename,
+                "file_size": file.size if hasattr(file, 'size') else None,
+                "data_source_id": data_source.id,
+                "source_type": "file"
+            }
+        )
 
         return data_source
         
@@ -441,7 +491,7 @@ async def get_data_source_content(
             
         # Handle web scraper type
         elif data_source.source_type == "web_scraper":
-            url = data_source.connection_settings.get("url")
+            url = data_source.connection_settings.get("urls")
             if not url:
                 raise HTTPException(status_code=404, detail="URL not found")
             

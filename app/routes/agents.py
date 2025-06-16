@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 import base64
@@ -11,6 +11,7 @@ from ..models.agent import Agent
 from ..models.vector_source import VectorSource
 from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse
 from ..utils.auth import get_current_user
+from ..utils.activity_logger import log_activity
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -19,53 +20,129 @@ async def create_agent(
     agent_data: str = Form(...),
     avatar: Optional[UploadFile] = File(None),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Create a new agent"""
     try:
-        # Parse agent data
-        agent_dict = json.loads(agent_data)
-        agent_data = AgentCreate(**agent_dict)
-        
-        # Handle avatar
-        avatar_base64 = None
-        if avatar:
-            contents = await avatar.read()
-            avatar_base64 = base64.b64encode(contents).decode('utf-8')
-        print(agent_data.vector_source_ids)
-        # Create agent
-        db_agent = Agent(
-            user_id=current_user.id,
-            name=agent_data.name,
-            description=agent_data.description,
-            is_private=agent_data.is_private,
-            welcome_message=agent_data.welcome_message,
-            instructions=agent_data.instructions,
-            base_model=agent_data.base_model,
-            category=agent_data.category,
-            avatar_base64=avatar_base64,
-            reference_enabled=agent_data.reference_enabled,
-            vector_sources_ids=agent_data.vector_source_ids if agent_data.vector_source_ids else []
-        )
-        
-        # Add vector sources if provided
-        if agent_data.vector_source_ids:
-            vector_sources = db.query(VectorSource).filter(
-                VectorSource.id.in_(agent_data.vector_source_ids)
-            ).all()
-            db_agent.vector_sources.extend(vector_sources)
-        
-        db.add(db_agent)
-        db.commit()
-        db.refresh(db_agent)
-        
-        return db_agent
-        
-    except Exception as e:
+        agent_create = AgentCreate.parse_raw(agent_data)
+    except ValidationError as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e)
         )
+
+    # Handle vector sources if provided
+    vector_sources_ids = []
+    print(agent_create)
+    if agent_create.vector_source_ids:
+        try:
+            # Get all vector sources that belong to the user
+            vector_sources = db.query(VectorSource).filter(
+                VectorSource.id.in_(agent_create.vector_source_ids),
+                VectorSource.user_id == current_user.id
+            ).all()
+
+            if len(vector_sources) != len(agent_create.vector_source_ids):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="One or more vector sources not found or not accessible"
+                )
+
+            vector_source_ids = [vs.id for vs in vector_sources]
+
+        except Exception as e:
+            print(f"Error validating vector sources: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Error validating vector sources"
+            )
+    # Create agent
+    db_agent = Agent(
+        name=agent_create.name,
+        description=agent_create.description,
+        instructions=agent_create.instructions,
+        user_id=current_user.id,
+        vector_sources_ids=vector_source_ids,  # Use validated vector sources IDs
+        base_model=agent_create.base_model,
+        is_private=agent_create.is_private,
+        welcome_message=agent_create.welcome_message,
+        category=agent_create.category,
+        reference_enabled=agent_create.reference_enabled
+    )
+
+    # Handle avatar
+    if avatar:
+        try:
+            # Save as base64
+            contents = await avatar.read()
+            db_agent.avatar_base64 = base64.b64encode(contents).decode('utf-8')
+            
+            # Also save file in static directory
+            static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+            avatars_dir = os.path.join(static_dir, "avatars")
+            os.makedirs(avatars_dir, exist_ok=True)
+
+            # Save avatar file and update agent
+            avatar_filename = f"{current_user.id}_{db_agent.id}_{avatar.filename}"
+            avatar_path = os.path.join(avatars_dir, avatar_filename)
+            
+            # Seek back to start of file after previous read
+            await avatar.seek(0)
+            contents = await avatar.read()
+            with open(avatar_path, "wb") as f:
+                f.write(contents)
+            
+            db_agent.avatar_url = f"/static/avatars/{avatar_filename}"
+            
+        except Exception as e:
+            # If avatar upload fails, we still want to keep the agent
+            # Just log the error and continue
+            print(f"Error saving avatar: {str(e)}")
+
+    # Add to database to get the ID
+    db.add(db_agent)
+    db.commit()
+    db.refresh(db_agent)
+
+    # Set up vector source relationships after agent is created
+    if vector_sources_ids:
+        try:
+            # Associate vector sources with agent using the relationship
+            vector_sources = db.query(VectorSource).filter(
+                VectorSource.id.in_(vector_sources_ids)
+            ).all()
+            db_agent.vector_sources = vector_sources
+            
+            # Make sure the vector_sources_ids array is set
+            db_agent.vector_sources_ids = vector_sources_ids
+            
+            db.commit()
+            db.refresh(db_agent)
+
+        except Exception as e:
+            print(f"Error connecting vector sources: {str(e)}")
+            # Don't raise exception, just log the error
+            # The agent is still created, just without vector sources
+
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="agent_create",
+        description=f"Created agent: {db_agent.name}",
+        request=request,
+        metadata={
+            "agent_id": db_agent.id,
+            "agent_name": db_agent.name,
+            "vector_sources_count": len(db_agent.vector_sources_ids or []),
+            "vector_sources_ids": db_agent.vector_sources_ids,  # Add IDs to activity log
+            "has_avatar": avatar is not None,
+            "base_model": db_agent.base_model
+        }
+    )
+
+    return db_agent
 
 @router.get("", response_model=List[AgentResponse])
 async def get_agents(
@@ -73,7 +150,19 @@ async def get_agents(
     db: Session = Depends(get_db)
 ):
     """Get all agents for current user"""
-    return db.query(Agent).filter(Agent.user_id == current_user.id).all()
+    # Query agents with default base_model if not set
+    agents = db.query(Agent).filter(Agent.user_id == current_user.id).all()
+    
+    # Set default base_model for any agents that don't have it
+    for agent in agents:
+        if agent.base_model is None:
+            agent.base_model = "gpt-4"  # Set a default model
+            db.add(agent)
+    
+    if agents:
+        db.commit()
+    
+    return agents
 
 @router.get("/{agent_id}", response_model=AgentResponse)
 async def get_agent(
@@ -89,6 +178,13 @@ async def get_agent(
     
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Set default base_model if not set
+    if agent.base_model is None:
+        agent.base_model = "gpt-4"  # Set a default model
+        db.add(agent)
+        db.commit()
+    
     return agent
 
 @router.put("/{agent_id}", response_model=AgentResponse)
@@ -205,6 +301,7 @@ async def update_agent(
 async def delete_agent(
     agent_id: int,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Delete an agent"""
@@ -215,9 +312,29 @@ async def delete_agent(
     
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-
+    
+    # Store agent info for activity log
+    agent_info = {
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        "vector_sources_count": len(agent.vector_sources_ids or [])
+    }
+    
+    # Delete agent
     db.delete(agent)
     db.commit()
+
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="agent_delete",
+        description=f"Deleted agent: {agent_info['agent_name']}",
+        request=request,
+        metadata=agent_info
+    )
+
+    return {"message": "Agent deleted successfully"}
 
 @router.post("/{agent_id}/vector-sources", response_model=AgentResponse)
 async def add_vector_source(

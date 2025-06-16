@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
@@ -6,6 +6,7 @@ from ..models.user import User
 from ..models.model_settings import ModelSettings
 from ..schemas.model_settings import ModelCreate, ModelUpdate, ModelResponse, ModelsResponse
 from ..utils.auth import get_current_user
+from ..utils.activity_logger import log_activity
 
 router = APIRouter(prefix="/models", tags=["Models"])
 
@@ -81,6 +82,7 @@ async def get_models(
 async def set_default_model(
     model_name: str,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Set the default model for the user"""
@@ -97,6 +99,13 @@ async def set_default_model(
             detail="Model not found"
         )
 
+    # Store old default model for activity log
+    old_default = db.query(ModelSettings).filter(
+        ModelSettings.user_id == current_user.id,
+        ModelSettings.is_default == True
+    ).first()
+    old_default_name = old_default.ai_model_name if old_default else None
+
     # Remove default status from all models
     db.query(ModelSettings).filter(
         ModelSettings.user_id == current_user.id
@@ -107,12 +116,27 @@ async def set_default_model(
     db.commit()
     db.refresh(model_setting)
 
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="model_default_change",
+        description=f"Changed default model to: {model_name}",
+        request=request,
+        metadata={
+            "new_default_model": model_name,
+            "previous_default_model": old_default_name,
+            "provider": model_setting.provider
+        }
+    )
+
     return model_setting
 
 @router.put("/{model_name}/toggle", response_model=ModelResponse)
 async def toggle_model(
     model_name: str,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Toggle a model's enabled status"""
@@ -128,8 +152,27 @@ async def toggle_model(
             detail="Model not found"
         )
 
+    # Store old state for activity log
+    old_state = model_setting.is_enabled
+
+    # Toggle the state
     model_setting.is_enabled = not model_setting.is_enabled
     db.commit()
     db.refresh(model_setting)
+
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=current_user.id,
+        activity_type="model_toggle",
+        description=f"{'Enabled' if model_setting.is_enabled else 'Disabled'} model: {model_name}",
+        request=request,
+        metadata={
+            "model_name": model_name,
+            "provider": model_setting.provider,
+            "new_state": model_setting.is_enabled,
+            "previous_state": old_state
+        }
+    )
 
     return model_setting 

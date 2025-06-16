@@ -2,9 +2,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings
+from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity
 from .database import engine
-from .models import user, settings as settings_model
+from .models import user, settings as settings_model, user_activity
 import os
 
 load_dotenv()
@@ -12,6 +12,7 @@ load_dotenv()
 # Create database tables
 user.Base.metadata.create_all(bind=engine)
 settings_model.Base.metadata.create_all(bind=engine)
+user_activity.Base.metadata.create_all(bind=engine)
 
 # Create static directory if it doesn't exist
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -54,6 +55,7 @@ app.include_router(data_source.router)
 app.include_router(dashboard.router)
 app.include_router(payments.router)
 app.include_router(settings.router)
+app.include_router(activity.router)
 
 @app.get("/")
 def root():

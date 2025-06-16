@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import Optional, Literal
 import stripe
 from sqlalchemy.orm import Session
@@ -11,6 +11,8 @@ from ..models.user import User
 from datetime import datetime
 import uuid
 import traceback
+from ..utils.activity_logger import log_activity
+from ..utils.auth import get_current_user
 
 router = APIRouter(prefix="/payment", tags=["payment"])
 
@@ -62,7 +64,12 @@ class RetrieveSessionRequest(BaseModel):
     session_id: str
 
 @router.post("/create-checkout-session")
-async def create_checkout_session(request: CreateCheckoutSessionRequest):
+async def create_checkout_session(
+    request: CreateCheckoutSessionRequest,
+    current_user: User = Depends(get_current_user),
+    req: Request = None,
+    db: Session = Depends(get_db)
+):
     try:
         # Default URLs if not provided
         success_url = request.success_url or f"{config['FRONTEND_URL']}/payment/success"
@@ -100,6 +107,22 @@ async def create_checkout_session(request: CreateCheckoutSessionRequest):
             allow_promotion_codes=True,
             client_reference_id=str(uuid.uuid4())  # Add a unique reference ID
         )
+
+        # Log activity for checkout session creation
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            activity_type="checkout_session_create",
+            description=f"Created checkout session for {request.plan_type} plan ({request.billing_interval})",
+            request=req,
+            metadata={
+                "plan_type": request.plan_type,
+                "billing_interval": request.billing_interval,
+                "seats": request.seats,
+                "session_id": session.id
+            }
+        )
+
         return {"sessionId": session.id, "url": session.url}
     except KeyError:
         raise HTTPException(status_code=400, detail="Invalid plan type or billing interval")
@@ -173,6 +196,8 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
             Subscription.stripe_subscription_id == subscription_data.id
         ).first()
 
+        is_new_subscription = not subscription
+
         if not subscription:
             subscription = Subscription(
                 user_id=user.id,
@@ -199,6 +224,39 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
         )
         db.add(payment)
         db.commit()
+
+        # Log subscription activity
+        await log_activity(
+            db=db,
+            user_id=user.id,
+            activity_type="subscription_update" if not is_new_subscription else "subscription_create",
+            description=f"{'Created' if is_new_subscription else 'Updated'} subscription for {session.metadata.get('plan_type')} plan",
+            metadata={
+                "subscription_id": subscription.id,
+                "stripe_subscription_id": subscription_data.id,
+                "plan_type": session.metadata.get('plan_type'),
+                "billing_interval": session.metadata.get('billing_interval'),
+                "seats": int(session.metadata.get('seats', 1)),
+                "status": subscription_data.status,
+                "is_new": is_new_subscription
+            }
+        )
+
+        # Log payment activity
+        await log_activity(
+            db=db,
+            user_id=user.id,
+            activity_type="payment_processed",
+            description=f"Processed payment for {session.metadata.get('plan_type')} plan subscription",
+            metadata={
+                "payment_id": payment.id,
+                "stripe_payment_id": payment.stripe_payment_id,
+                "amount": payment.amount,
+                "currency": payment.currency,
+                "status": payment.status,
+                "subscription_id": subscription.id
+            }
+        )
         
         return subscription
     except Exception as e:

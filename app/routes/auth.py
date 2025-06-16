@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -9,11 +9,12 @@ from ..utils.password import verify_password, get_password_hash
 from ..utils.auth import create_access_token
 from ..config import config
 from ..services.settings import SettingsService
+from ..utils.activity_logger import log_activity
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/signup", response_model=UserResponse)
-def signup(user: UserCreate, db: Session = Depends(get_db)):
+async def signup(user: UserCreate, request: Request, db: Session = Depends(get_db)):
     # Check if email login is enabled
     auth_settings = SettingsService.get_auth_settings(db)
     if auth_settings and not auth_settings.email_login_enabled:
@@ -43,10 +44,24 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
 
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=db_user.id,
+        activity_type="signup",
+        description="User signed up",
+        request=request,
+        metadata={"provider": "credentials"}
+    )
+
     return db_user
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
     # Check if email login is enabled
     auth_settings = SettingsService.get_auth_settings(db)
     if auth_settings and not auth_settings.email_login_enabled:
@@ -57,6 +72,16 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
+        # Log failed login attempt
+        if user:
+            await log_activity(
+                db=db,
+                user_id=user.id,
+                activity_type="login_failed",
+                description="Failed login attempt",
+                request=request,
+                metadata={"reason": "incorrect_password"}
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -67,6 +92,17 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
+
+    # Log successful login
+    await log_activity(
+        db=db,
+        user_id=user.id,
+        activity_type="login",
+        description="User logged in successfully",
+        request=request,
+        metadata={"provider": "credentials"}
+    )
+
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/google", response_model=Token)

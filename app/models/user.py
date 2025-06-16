@@ -24,3 +24,4 @@ class User(Base):
     vector_sources = relationship("VectorSource", back_populates="user")
     subscription = relationship("Subscription", back_populates="user", uselist=False)  # One-to-one relationship
     payments = relationship("Payment", back_populates="user")
+    activities = relationship("UserActivity", back_populates="user")  # Add activities relationship
