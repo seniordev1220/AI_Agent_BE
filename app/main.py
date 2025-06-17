@@ -36,6 +36,10 @@ origins = [
     "https://localhost:3000",
     "http://3.112.199.154:3000",
     "https://3.112.199.154:3000",
+    "http://localhost:4000",
+    "https://localhost:4000",
+    "http://3.112.199.154:4000",
+    "https://3.112.199.154:4000",
     "http://app.finiite.com",
     "https://app.finiite.com",
     "*",  # Allow all origins for the widget (you may want to restrict this in production)
