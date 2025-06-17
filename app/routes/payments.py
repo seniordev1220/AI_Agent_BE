@@ -269,7 +269,6 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
 @router.post("/retrieve-checkout-session")
 async def retrieve_checkout_session(
     request: RetrieveSessionRequest,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
@@ -367,8 +366,6 @@ async def retrieve_checkout_session(
         }
     except stripe.error.InvalidRequestError as e:
         raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    except HTTPException as e:
-        raise e
     except Exception as e:
         print("Error details:", str(e))
         print("Traceback:", traceback.format_exc())
