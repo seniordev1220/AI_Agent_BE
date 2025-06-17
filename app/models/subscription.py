@@ -8,6 +8,7 @@ class Subscription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
+    price_plan_id = Column(Integer, ForeignKey("price_plans.id"))
     stripe_subscription_id = Column(String, unique=True, index=True)
     plan_type = Column(String)  # individual, standard, smb
     billing_interval = Column(String)  # monthly, annual
@@ -20,4 +21,5 @@ class Subscription(Base):
 
     # Relationships
     user = relationship("User", back_populates="subscription")
-    payments = relationship("Payment", back_populates="subscription") 
+    payments = relationship("Payment", back_populates="subscription")
+    price_plan = relationship("PricePlan", back_populates="subscriptions") 

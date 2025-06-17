@@ -2,9 +2,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity
-from .database import engine
-from .models import user, settings as settings_model, user_activity
+from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity, price_plans
+from .database import engine, SessionLocal
+from .models import user, settings as settings_model, user_activity, price_plan, subscription, payment
+from .utils.db_init import create_default_admin, create_default_price_plans
 import os
 
 load_dotenv()
@@ -13,6 +14,17 @@ load_dotenv()
 user.Base.metadata.create_all(bind=engine)
 settings_model.Base.metadata.create_all(bind=engine)
 user_activity.Base.metadata.create_all(bind=engine)
+price_plan.Base.metadata.create_all(bind=engine)
+subscription.Base.metadata.create_all(bind=engine)
+payment.Base.metadata.create_all(bind=engine)
+
+# Initialize default data
+db = SessionLocal()
+try:
+    create_default_admin(db)
+    create_default_price_plans(db)
+finally:
+    db.close()
 
 # Create static directory if it doesn't exist
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -56,6 +68,7 @@ app.include_router(dashboard.router)
 app.include_router(payments.router)
 app.include_router(settings.router)
 app.include_router(activity.router)
+app.include_router(price_plans.router)
 
 @app.get("/")
 def root():

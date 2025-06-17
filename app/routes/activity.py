@@ -49,8 +49,8 @@ async def get_recent_activities(
     db: Session = Depends(get_db)
 ):
     """Get recent activities across all users (admin only)."""
-    # Check if user has admin privileges
-    if not getattr(current_user, "is_admin", False):
+    # Check if user has admin role
+    if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized to view all activities")
     
     activity_service = ActivityService(db)

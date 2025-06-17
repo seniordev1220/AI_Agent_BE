@@ -12,6 +12,7 @@ class User(Base):
     last_name = Column(String)
     hashed_password = Column(String, nullable=True)  # Make nullable for Google auth
     provider = Column(String, nullable=True)  # Add provider field
+    role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
