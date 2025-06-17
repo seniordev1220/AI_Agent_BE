@@ -30,6 +30,8 @@ from ..models.chat import FileAttachment
 from fpdf import FPDF
 from docx import Document
 from ..utils.activity_logger import log_activity
+from ..services.trial_service import TrialService
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -122,6 +124,15 @@ async def create_message(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"No valid API key found for OpenAI"
         )
+
+    # Check daily message limit for trial users
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_messages = db.query(ChatMessage).filter(
+        ChatMessage.user_id == current_user.id,
+        ChatMessage.created_at >= today_start
+    ).count()
+    
+    TrialService.check_trial_limits(db, current_user, 'messages_per_day', today_messages)
 
     # Save user message
     user_message = ChatMessage(

@@ -12,6 +12,7 @@ from ..models.vector_source import VectorSource
 from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse
 from ..utils.auth import get_current_user
 from ..utils.activity_logger import log_activity
+from ..services.trial_service import TrialService
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -31,6 +32,10 @@ async def create_agent(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(e)
         )
+
+    # Check trial limits
+    existing_agents_count = db.query(Agent).filter(Agent.user_id == current_user.id).count()
+    TrialService.check_trial_limits(db, current_user, 'agents', existing_agents_count)
 
     # Handle vector sources if provided
     vector_source_ids = []  # Initialize the variable
@@ -149,6 +154,9 @@ async def get_agents(
     db: Session = Depends(get_db)
 ):
     """Get all agents for current user"""
+    # Get trial status for notification
+    trial_status = TrialService.check_trial_status(db, current_user)
+    
     # Query agents with default base_model if not set
     agents = db.query(Agent).filter(Agent.user_id == current_user.id).all()
     
@@ -160,6 +168,12 @@ async def get_agents(
     
     if agents:
         db.commit()
+    
+    # If trial is active, add trial status message to response headers
+    if not trial_status['has_subscription']:
+        # Note: In a real implementation, you would need to modify the response
+        # headers or return a custom response object that includes this information
+        pass
     
     return agents
 

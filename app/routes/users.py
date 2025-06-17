@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..schemas.user import UserProfile, UserUpdate, PasswordChange, UserCreate
+from ..schemas.user import UserProfile, UserUpdate, PasswordChange, UserCreate, UserResponse
 from ..models.user import User
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, get_current_admin_user
 from ..utils.password import verify_password, get_password_hash
+from ..services.trial_service import TrialService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -183,3 +184,17 @@ async def get_user_by_id(
             detail="User not found"
         )
     return user
+
+@router.get("/trial-status")
+def get_trial_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the current user's trial status and limits"""
+    trial_status = TrialService.check_trial_status(db, current_user)
+    
+    # If user has an active trial, include the limits
+    if trial_status['trial_active']:
+        trial_status['limits'] = TrialService.get_trial_limits()
+    
+    return trial_status

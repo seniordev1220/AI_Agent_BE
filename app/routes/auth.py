@@ -10,6 +10,7 @@ from ..utils.auth import create_access_token
 from ..config import config
 from ..services.settings import SettingsService
 from ..utils.activity_logger import log_activity
+from ..services.trial_service import TrialService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -44,14 +45,21 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
     db.commit()
     db.refresh(db_user)
 
+    # Start trial period
+    TrialService.start_trial(db, db_user)
+
     # Log activity
     await log_activity(
         db=db,
         user_id=db_user.id,
         activity_type="signup",
-        description="User signed up",
+        description="User signed up and trial period started",
         request=request,
-        metadata={"provider": "credentials"}
+        metadata={
+            "provider": "credentials",
+            "trial_start": db_user.trial_start.isoformat(),
+            "trial_end": db_user.trial_end.isoformat()
+        }
     )
 
     return db_user

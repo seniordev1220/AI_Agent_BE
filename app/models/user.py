@@ -14,6 +14,9 @@ class User(Base):
     provider = Column(String, nullable=True)  # Add provider field
     role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
+    trial_start = Column(DateTime(timezone=True), nullable=True)
+    trial_end = Column(DateTime(timezone=True), nullable=True)
+    trial_status = Column(String, default='active')  # active, expired
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
