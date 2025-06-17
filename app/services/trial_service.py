@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ..models.user import User
 from ..models.subscription import Subscription
 from fastapi import HTTPException
+from datetime import timezone
 
 class TrialService:
     TRIAL_DURATION_DAYS = 14
@@ -15,7 +16,7 @@ class TrialService:
     @staticmethod
     def start_trial(db: Session, user: User) -> None:
         """Start the trial period for a new user"""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         user.trial_start = now
         user.trial_end = now + timedelta(days=TrialService.TRIAL_DURATION_DAYS)
         user.trial_status = 'active'
@@ -43,7 +44,17 @@ class TrialService:
                 'message': f'Trial started. {TrialService.TRIAL_DURATION_DAYS} days remaining'
             }
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
+        if user.trial_end is None:
+            TrialService.start_trial(db, user)
+            return {
+                'has_subscription': False,
+                'trial_active': True,
+                'trial_expired': False,
+                'days_remaining': TrialService.TRIAL_DURATION_DAYS,
+                'message': f'Trial started. {TrialService.TRIAL_DURATION_DAYS} days remaining'
+            }
+
         if now > user.trial_end:
             if user.trial_status != 'expired':
                 user.trial_status = 'expired'
