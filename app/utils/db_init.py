@@ -9,7 +9,7 @@ def create_default_admin(db: Session) -> None:
     """
     Create default admin user if it doesn't exist
     """
-    admin_email = "admin@example.com"
+    admin_email = "contact@finiite.com"
     
     # Check if admin already exists
     admin = db.query(User).filter(User.email == admin_email).first()
@@ -19,9 +19,9 @@ def create_default_admin(db: Session) -> None:
     # Create admin user
     admin_user = User(
         email=admin_email,
-        first_name="Admin",
-        last_name="User",
-        hashed_password=get_password_hash("admin123"),
+        first_name="Fatima",
+        last_name="Awan",
+        hashed_password=get_password_hash("admin$1M"),
         role="admin",
         is_active=True
     )
