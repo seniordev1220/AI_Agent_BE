@@ -22,6 +22,8 @@ import os
 from ..services.file_upload_service import FileUploadService
 from ..services.size_tracking_service import SizeTrackingService
 from ..services.vector_service import VectorService
+from ..services.subscription_service import SubscriptionService
+from ..services.trial_service import TrialService
 import uuid
 from fastapi.responses import StreamingResponse, FileResponse
 import mimetypes
@@ -60,6 +62,23 @@ async def create_data_source(
             data_source.source_type,
             connection_settings
         )
+        
+        # Check storage limits
+        if current_user.subscription:
+            # Check subscription limits
+            SubscriptionService.check_storage_limit(
+                db, 
+                current_user, 
+                size_info.get("raw_size_bytes", 0)
+            )
+        else:
+            # Check trial limits
+            TrialService.check_trial_limits(
+                db, 
+                current_user, 
+                'storage_mb', 
+                size_info.get("raw_size_bytes", 0) / (1024 * 1024)  # Convert to MB
+            )
         
         # Add size information to connection settings
         connection_settings["file_size"] = size_info.get("raw_size_bytes", 0)
@@ -215,6 +234,17 @@ async def upload_file(
     db: Session = Depends(get_db)
 ):    
     try:
+        # Check file size before processing
+        file_size = os.fstat(file.file.fileno()).st_size
+        
+        # Check storage limits
+        if current_user.subscription:
+            # Check subscription limits
+            SubscriptionService.check_storage_limit(db, current_user, file_size)
+        else:
+            # Check trial limits
+            TrialService.check_trial_limits(db, current_user, 'storage_mb', file_size / (1024 * 1024))
+        
         file_service = FileUploadService(db)
         data_source = await file_service.process_upload(file, current_user.id)
 
@@ -227,7 +257,7 @@ async def upload_file(
             request=request,
             metadata={
                 "file_name": file.filename,
-                "file_size": file.size if hasattr(file, 'size') else None,
+                "file_size": file_size,
                 "data_source_id": data_source.id,
                 "source_type": "file"
             }

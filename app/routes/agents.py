@@ -13,6 +13,7 @@ from ..schemas.agent import AgentCreate, AgentUpdate, AgentResponse
 from ..utils.auth import get_current_user
 from ..utils.activity_logger import log_activity
 from ..services.trial_service import TrialService
+from ..services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -33,9 +34,15 @@ async def create_agent(
             detail=str(e)
         )
 
-    # Check trial limits
+    # Check trial or subscription limits
     existing_agents_count = db.query(Agent).filter(Agent.user_id == current_user.id).count()
-    TrialService.check_trial_limits(db, current_user, 'agents', existing_agents_count)
+    
+    if current_user.subscription:
+        # Check subscription limits
+        SubscriptionService.check_agent_limit(db, current_user, existing_agents_count)
+    else:
+        # Check trial limits
+        TrialService.check_trial_limits(db, current_user, 'agents', existing_agents_count)
 
     # Handle vector sources if provided
     vector_source_ids = []  # Initialize the variable
