@@ -37,8 +37,8 @@ async def get_dashboard_stats(
         start_date = end_date - timedelta(days=30)
         date_filter = (ChatMessage.created_at >= start_date, ChatMessage.created_at <= end_date)
 
-    # Get total number of users (all time)
-    total_users = db.query(func.count(User.id)).scalar()
+    # Get total number of users (all time) - only count users with role='user'
+    total_users = db.query(func.count(User.id)).filter(User.role == 'user').scalar()
     
     # Get total messages (filtered if needed)
     msg_query = db.query(ChatMessage)
@@ -88,12 +88,14 @@ async def get_user_token_usage(
 ):
     """Get token usage statistics per user"""
     
-    # Query all users and their messages
+    # Query all users and their messages - only for regular users
     user_messages = db.query(
         User.email,
         ChatMessage.content
     ).join(
         ChatMessage, User.id == ChatMessage.user_id
+    ).filter(
+        User.role == 'user'
     ).all()
     
     # Calculate token usage per user
@@ -126,7 +128,7 @@ async def get_messages_by_date(
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
     
-    # Query message counts grouped by date
+    # Query message counts grouped by date - only for regular users
     daily_messages = db.query(
         func.date(ChatMessage.created_at).label('date'),
         func.count(ChatMessage.id).label('message_count'),
@@ -134,8 +136,11 @@ async def get_messages_by_date(
     ).join(
         User, ChatMessage.user_id == User.id
     ).filter(
-        ChatMessage.created_at >= start_date,
-        ChatMessage.created_at <= end_date
+        and_(
+            ChatMessage.created_at >= start_date,
+            ChatMessage.created_at <= end_date,
+            User.role == 'user'
+        )
     ).group_by(
         func.date(ChatMessage.created_at),
         User.email

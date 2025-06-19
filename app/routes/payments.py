@@ -56,7 +56,12 @@ PRICE_IDS = {
 class CreateCheckoutSessionRequest(BaseModel):
     plan_type: Literal["individual", "standard", "smb"]
     billing_interval: Literal["monthly", "annual"]
-    seats: int = 1
+    base_seats: int
+    additional_seats: int = 0
+    additional_seats_price: float
+    base_price: float
+    total_price: float
+    stripe_price_id: str
     success_url: Optional[str] = None
     cancel_url: Optional[str] = None
 
@@ -78,7 +83,7 @@ async def create_checkout_session(
         # Get the appropriate price IDs based on plan type and billing interval
         price_ids = PRICE_IDS[request.plan_type][request.billing_interval]
         
-        # Create line items for base plan and additional seats
+        # Create line items for base plan
         line_items = [
             {
                 "price": price_ids["base"],
@@ -86,13 +91,14 @@ async def create_checkout_session(
             }
         ]
         
-        # Add additional seats if more than 1 seat is requested
-        if request.seats > 1:
+        # Add additional seats if requested
+        if request.additional_seats > 0:
             line_items.append({
                 "price": price_ids["seat"],
-                "quantity": request.seats - 1,  # Subtract 1 because base plan includes 1 seat
+                "quantity": request.additional_seats,  # Use the exact number of additional seats
             })
 
+        # Create the checkout session
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             line_items=line_items,
@@ -102,10 +108,15 @@ async def create_checkout_session(
             metadata={
                 "plan_type": request.plan_type,
                 "billing_interval": request.billing_interval,
-                "seats": request.seats
+                "base_seats": request.base_seats,
+                "additional_seats": request.additional_seats,
+                "total_seats": request.base_seats + request.additional_seats,
+                "base_price": str(request.base_price),
+                "additional_seats_price": str(request.additional_seats_price),
+                "total_price": str(request.total_price)
             },
             allow_promotion_codes=True,
-            client_reference_id=str(uuid.uuid4())  # Add a unique reference ID
+            client_reference_id=str(uuid.uuid4())
         )
 
         # Log activity for checkout session creation
@@ -118,7 +129,12 @@ async def create_checkout_session(
             metadata={
                 "plan_type": request.plan_type,
                 "billing_interval": request.billing_interval,
-                "seats": request.seats,
+                "base_seats": request.base_seats,
+                "additional_seats": request.additional_seats,
+                "total_seats": request.base_seats + request.additional_seats,
+                "base_price": request.base_price,
+                "additional_seats_price": request.additional_seats_price,
+                "total_price": request.total_price,
                 "session_id": session.id
             }
         )
@@ -129,39 +145,47 @@ async def create_checkout_session(
     except stripe.error.StripeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        print("Error details:", str(e))
+        print("Traceback:", traceback.format_exc())
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/session/{session_id}")
-async def get_session(
-    session_id: str,
-    current_user: User = Depends(get_current_user),
+@router.post("/retrieve-checkout-session")
+async def retrieve_checkout_session(
+    request: RetrieveSessionRequest,
     db: Session = Depends(get_db)
 ):
     try:
+        # Retrieve the checkout session
         session = stripe.checkout.Session.retrieve(
-            session_id,
-            expand=['subscription', 'payment_intent', 'customer']
+            request.session_id,
+            expand=['payment_intent', 'subscription']
         )
         
-        # If session is successful, ensure subscription is stored
-        if session.payment_status == 'paid' and session.status == 'complete':
-            await store_subscription(session, db)
-            
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        if session.payment_status == 'paid':
+            # Store the subscription data
+            subscription = await store_subscription(session, db)
+
         return {
             "status": "success",
             "session": {
                 "id": session.id,
                 "payment_status": session.payment_status,
-                "status": session.status,
                 "customer_email": session.customer_details.email if hasattr(session, 'customer_details') else None,
-                "subscription_id": session.subscription,
-                "client_reference_id": session.client_reference_id
+                "amount_total": session.amount_total / 100 if session.amount_total else None,
+                "currency": session.currency,
+                "subscription_id": session.subscription.id if session.subscription else None,
+                "metadata": session.metadata
             }
         }
-    except stripe.error.StripeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except stripe.error.InvalidRequestError as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print("Error details:", str(e))
+        print("Traceback:", traceback.format_exc())
+        raise HTTPException(status_code=400, detail=f"Error processing payment session: {str(e)}")
 
 async def store_subscription(session: stripe.checkout.Session, db: Session):
     """Helper function to store subscription data in database"""
@@ -183,14 +207,24 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
             subscription=subscription_data.id
         )
         
-        # Get period dates from the first subscription item
+        # Get period dates from subscription items
+        current_period_start = None
+        current_period_end = None
+        
         if subscription_items and subscription_items.data:
-            subscription_item = subscription_items.data[0]
-            current_period_start = subscription_item.current_period_start
-            current_period_end = subscription_item.current_period_end
-        else:
+            for item in subscription_items.data:
+                if not current_period_start or item.current_period_start < current_period_start:
+                    current_period_start = item.current_period_start
+                if not current_period_end or item.current_period_end > current_period_end:
+                    current_period_end = item.current_period_end
+        
+        if not current_period_start:
             current_period_start = subscription_data.created
-            current_period_end = None
+
+        # Get seat information from metadata
+        base_seats = int(session.metadata.get('base_seats', 1))
+        additional_seats = int(session.metadata.get('additional_seats', 0))
+        total_seats = base_seats + additional_seats
 
         # Create or update subscription
         subscription = db.query(Subscription).filter(
@@ -205,7 +239,12 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
                 stripe_subscription_id=subscription_data.id,
                 plan_type=session.metadata.get('plan_type'),
                 billing_interval=session.metadata.get('billing_interval'),
-                seats=int(session.metadata.get('seats', 1)),
+                base_seats=base_seats,
+                additional_seats=additional_seats,
+                total_seats=total_seats,
+                base_price=float(session.metadata.get('base_price', 0)),
+                additional_seats_price=float(session.metadata.get('additional_seats_price', 0)),
+                total_price=float(session.metadata.get('total_price', 0)),
                 status=subscription_data.status,
                 current_period_start=datetime.fromtimestamp(current_period_start) if current_period_start else None,
                 current_period_end=datetime.fromtimestamp(current_period_end) if current_period_end else None
@@ -217,8 +256,8 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
         payment = Payment(
             user_id=user.id,
             subscription_id=subscription.id,
-            stripe_payment_id=session.invoice or session.payment_intent,
-            amount=session.amount_total if session.amount_total else 0,
+            stripe_payment_id=session.payment_intent or session.subscription,
+            amount=session.amount_total / 100 if session.amount_total else 0,  # Convert from cents to dollars
             currency=session.currency.lower() if session.currency else 'usd',
             status=session.payment_status,
             payment_method='card'
@@ -237,136 +276,20 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
                 "stripe_subscription_id": subscription_data.id,
                 "plan_type": session.metadata.get('plan_type'),
                 "billing_interval": session.metadata.get('billing_interval'),
-                "seats": int(session.metadata.get('seats', 1)),
+                "base_seats": base_seats,
+                "additional_seats": additional_seats,
+                "total_seats": total_seats,
+                "base_price": float(session.metadata.get('base_price', 0)),
+                "additional_seats_price": float(session.metadata.get('additional_seats_price', 0)),
+                "total_price": float(session.metadata.get('total_price', 0)),
                 "status": subscription_data.status,
                 "is_new": is_new_subscription
             }
         )
 
-        # Log payment activity
-        await log_activity(
-            db=db,
-            user_id=user.id,
-            activity_type="payment_processed",
-            description=f"Processed payment for {session.metadata.get('plan_type')} plan subscription",
-            metadata={
-                "payment_id": payment.id,
-                "stripe_payment_id": payment.stripe_payment_id,
-                "amount": payment.amount,
-                "currency": payment.currency,
-                "status": payment.status,
-                "subscription_id": subscription.id
-            }
-        )
-        
         return subscription
     except Exception as e:
         db.rollback()
         print(f"Error storing subscription: {str(e)}")
         print(traceback.format_exc())
-        raise
-
-@router.post("/retrieve-checkout-session")
-async def retrieve_checkout_session(
-    request: RetrieveSessionRequest,
-    db: Session = Depends(get_db)
-):
-    try:
-        # Retrieve the checkout session
-        session = stripe.checkout.Session.retrieve(
-            request.session_id,
-            expand=['payment_intent']
-        )
-        
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        if session.payment_status == 'paid':
-            # Get the user from the customer email
-            customer_email = session.customer_details.email
-            if not customer_email:
-                raise HTTPException(status_code=400, detail="Customer email not found in session")
-
-            user = db.query(User).filter(User.email == customer_email).first()
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            # Retrieve subscription details if we have a subscription ID
-            if not session.subscription:
-                raise HTTPException(status_code=400, detail="Subscription data not found in session")
-
-            try:
-                subscription_data = stripe.Subscription.retrieve(session.subscription)
-                
-                # Get subscription items
-                subscription_items = stripe.SubscriptionItem.list(
-                    subscription=subscription_data.id
-                )
-                
-                # Get period dates from the first subscription item
-                if subscription_items and subscription_items.data:
-                    subscription_item = subscription_items.data[0]
-                    current_period_start = subscription_item.current_period_start
-                    current_period_end = subscription_item.current_period_end
-                else:
-                    # Fallback to subscription creation time if no items
-                    current_period_start = subscription_data.created
-                    current_period_end = None
-
-                # Create or update subscription
-                subscription = db.query(Subscription).filter(
-                    Subscription.stripe_subscription_id == subscription_data.id
-                ).first()
-
-                if not subscription:
-                    # Verify we have the required metadata
-                    if not all(key in session.metadata for key in ['plan_type', 'billing_interval']):
-                        raise HTTPException(status_code=400, detail="Missing required plan metadata")
-
-                    subscription = Subscription(
-                        user_id=user.id,
-                        stripe_subscription_id=subscription_data.id,
-                        plan_type=session.metadata.get('plan_type'),
-                        billing_interval=session.metadata.get('billing_interval'),
-                        seats=int(session.metadata.get('seats', 1)),
-                        status=subscription_data.status,
-                        current_period_start=datetime.fromtimestamp(current_period_start) if current_period_start else None,
-                        current_period_end=datetime.fromtimestamp(current_period_end) if current_period_end else None
-                    )
-                    db.add(subscription)
-                    db.flush()  # Get the subscription ID before creating payment
-
-                # Create payment record
-                payment = Payment(
-                    user_id=user.id,
-                    subscription_id=subscription.id,
-                    stripe_payment_id=session.invoice,  # Using invoice ID since this is a subscription
-                    amount=session.amount_total / 100 if session.amount_total else 0,  # Convert from cents to dollars
-                    currency=session.currency.lower() if session.currency else 'usd',
-                    status=session.payment_status,
-                    payment_method='card'  # For subscriptions, it's always card
-                )
-                db.add(payment)
-                db.commit()
-
-            except stripe.error.StripeError as e:
-                raise HTTPException(status_code=400, detail=f"Error retrieving subscription: {str(e)}")
-
-        return {
-            "status": "success",
-            "session": {
-                "id": session.id,
-                "payment_status": session.payment_status,
-                "customer_email": session.customer_details.email,
-                "amount_total": session.amount_total / 100 if session.amount_total else None,
-                "currency": session.currency,
-                "subscription_id": session.subscription,
-                "metadata": session.metadata
-            }
-        }
-    except stripe.error.InvalidRequestError as e:
-        raise HTTPException(status_code=404, detail=f"Session not found: {str(e)}")
-    except Exception as e:
-        print("Error details:", str(e))
-        print("Traceback:", traceback.format_exc())
-        raise HTTPException(status_code=400, detail=f"Error processing payment session: {str(e)}") 
+        raise 

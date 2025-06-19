@@ -168,10 +168,10 @@ async def get_user_by_id(
     db: Session = Depends(get_db)
 ):
     """
-    Get user profile by user ID (admin only)
+    Get user profile by user ID. Users can view their own profile, while admins can view any profile.
     """
-    # Check if user has admin role
-    if current_user.role != "admin":
+    # Allow users to view their own profile or admins to view any profile
+    if current_user.role != "admin" and current_user.id != user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view user details"

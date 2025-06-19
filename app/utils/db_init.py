@@ -41,7 +41,7 @@ def create_default_price_plans(db: Session) -> None:
     plans = [
         PricePlan(
             name="individual",
-            monthly_price=Decimal("29"),
+            monthly_price=Decimal("39"),
             annual_price=Decimal("348"),  # $29 * 12 months
             included_seats=1,
             additional_seat_price=Decimal("7"),
@@ -58,7 +58,7 @@ def create_default_price_plans(db: Session) -> None:
         ),
         PricePlan(
             name="standard",
-            monthly_price=Decimal("74"),
+            monthly_price=Decimal("99"),
             annual_price=Decimal("888"),  # $74 * 12 months
             included_seats=2,
             additional_seat_price=Decimal("7"),
@@ -76,7 +76,7 @@ def create_default_price_plans(db: Session) -> None:
         ),
         PricePlan(
             name="SMB",
-            monthly_price=Decimal("118"),
+            monthly_price=Decimal("157"),
             annual_price=Decimal("1416"),  # $118 * 12 months
             included_seats=3,
             additional_seat_price=Decimal("5"),
