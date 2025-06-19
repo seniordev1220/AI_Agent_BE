@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..database import Base
@@ -14,6 +14,13 @@ class User(Base):
     provider = Column(String, nullable=True)  # Add provider field
     role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
+    
+    # Storage and usage limits
+    storage_limit_bytes = Column(BigInteger, default=1073741824)  # Default 1GB
+    storage_used_bytes = Column(BigInteger, default=0)
+    max_users = Column(Integer, default=1)  # Maximum number of users allowed for this account
+    current_users = Column(Integer, default=1)  # Current number of users in the account
+    
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
     trial_status = Column(String, default='active')  # active, expired

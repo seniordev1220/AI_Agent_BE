@@ -5,6 +5,11 @@ from ..models.subscription import Subscription
 from ..models.price_plan import PricePlan
 from fastapi import HTTPException
 from sqlalchemy import func
+import stripe
+from decimal import Decimal
+import os
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
 class SubscriptionService:
     PLAN_LIMITS = {
@@ -91,4 +96,138 @@ class SubscriptionService:
         limits = SubscriptionService.get_user_limits(db, user)
         if not limits:
             return False
-        return limits["workflow_automation"] 
+        return limits["workflow_automation"]
+
+async def create_or_update_custom_subscription(
+    db: Session,
+    user: User,
+    monthly_price: Decimal = None,
+    annual_price: Decimal = None
+) -> Subscription:
+    """Create or update a custom subscription plan for a user."""
+    
+    # Check if user already has a custom price plan
+    custom_plan = db.query(PricePlan).filter(
+        PricePlan.is_custom == True,
+        PricePlan.id == user.subscription.price_plan_id if user.subscription else None
+    ).first()
+    
+    if not custom_plan:
+        # Create new custom price plan
+        custom_plan = PricePlan(
+            name=f"Custom Plan - {user.email}",
+            monthly_price=monthly_price or Decimal('0'),
+            annual_price=annual_price or Decimal('0'),
+            included_seats=user.max_users,
+            storage_limit_bytes=user.storage_limit_bytes,
+            features={"custom": True},
+            is_custom=True
+        )
+        db.add(custom_plan)
+        db.flush()  # Get the ID
+        
+        # Create Stripe products and prices
+        if monthly_price:
+            product = stripe.Product.create(
+                name=f"Custom Plan - {user.email} (Monthly)",
+                description="Custom subscription plan"
+            )
+            monthly_stripe_price = stripe.Price.create(
+                product=product.id,
+                unit_amount=int(monthly_price * 100),  # Convert to cents
+                currency="usd",
+                recurring={"interval": "month"}
+            )
+            custom_plan.stripe_price_id_monthly = monthly_stripe_price.id
+        
+        if annual_price:
+            product = stripe.Product.create(
+                name=f"Custom Plan - {user.email} (Annual)",
+                description="Custom subscription plan"
+            )
+            annual_stripe_price = stripe.Price.create(
+                product=product.id,
+                unit_amount=int(annual_price * 100),  # Convert to cents
+                currency="usd",
+                recurring={"interval": "year"}
+            )
+            custom_plan.stripe_price_id_annual = annual_stripe_price.id
+    else:
+        # Update existing custom plan
+        if monthly_price is not None:
+            custom_plan.monthly_price = monthly_price
+            if custom_plan.stripe_price_id_monthly:
+                # Create new price and update product
+                product = stripe.Product.create(
+                    name=f"Custom Plan - {user.email} (Monthly)",
+                    description="Custom subscription plan"
+                )
+                monthly_stripe_price = stripe.Price.create(
+                    product=product.id,
+                    unit_amount=int(monthly_price * 100),
+                    currency="usd",
+                    recurring={"interval": "month"}
+                )
+                custom_plan.stripe_price_id_monthly = monthly_stripe_price.id
+        
+        if annual_price is not None:
+            custom_plan.annual_price = annual_price
+            if custom_plan.stripe_price_id_annual:
+                # Create new price and update product
+                product = stripe.Product.create(
+                    name=f"Custom Plan - {user.email} (Annual)",
+                    description="Custom subscription plan"
+                )
+                annual_stripe_price = stripe.Price.create(
+                    product=product.id,
+                    unit_amount=int(annual_price * 100),
+                    currency="usd",
+                    recurring={"interval": "year"}
+                )
+                custom_plan.stripe_price_id_annual = annual_stripe_price.id
+    
+    # Create or update subscription
+    if not user.subscription:
+        subscription = Subscription(
+            user_id=user.id,
+            price_plan_id=custom_plan.id,
+            plan_type="custom",
+            billing_interval="monthly" if monthly_price else "annual",
+            seats=user.max_users,
+            status="active"
+        )
+        db.add(subscription)
+    else:
+        user.subscription.price_plan_id = custom_plan.id
+        user.subscription.plan_type = "custom"
+        user.subscription.billing_interval = "monthly" if monthly_price else "annual"
+        user.subscription.seats = user.max_users
+        subscription = user.subscription
+    
+    db.commit()
+    return subscription
+
+async def cancel_subscription(stripe_subscription_id: str) -> None:
+    """Cancel a Stripe subscription."""
+    if stripe_subscription_id:
+        try:
+            stripe.Subscription.delete(stripe_subscription_id)
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+async def get_subscription_url(price_id: str, user_email: str) -> str:
+    """Get Stripe Checkout URL for subscription."""
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            success_url="https://your-domain.com/success",
+            cancel_url="https://your-domain.com/cancel",
+            mode="subscription",
+            customer_email=user_email,
+            line_items=[{
+                "price": price_id,
+                "quantity": 1
+            }]
+        )
+        return checkout_session.url
+    except stripe.error.StripeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) 

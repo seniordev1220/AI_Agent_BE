@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..schemas.user import UserProfile, UserUpdate, PasswordChange, UserCreate, UserResponse
+from ..schemas.user import UserProfile, UserUpdate, PasswordChange, UserCreate, UserResponse, UserAdminCreate, UserAdminUpdate, UserWithSubscription
 from ..models.user import User
+from ..models.price_plan import PricePlan
+from ..models.subscription import Subscription
 from ..utils.auth import get_current_user, get_current_admin_user
 from ..utils.password import verify_password, get_password_hash
 from ..services.trial_service import TrialService
+from ..services.subscription_service import create_or_update_custom_subscription, cancel_subscription
+from decimal import Decimal
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-@router.post("", response_model=UserProfile, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserWithSubscription, status_code=status.HTTP_201_CREATED)
 async def create_user(
-    user_data: UserCreate,
+    user_data: UserAdminCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -38,14 +42,39 @@ async def create_user(
         email=user_data.email,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
-        hashed_password=get_password_hash(user_data.password),
-        role="user"  # Default role for new users
+        role=user_data.role,
+        storage_limit_bytes=user_data.storage_limit_bytes,
+        max_users=user_data.max_users
     )
     
+    if user_data.password:
+        new_user.hashed_password = get_password_hash(user_data.password)
+    
     db.add(new_user)
+    db.flush()  # Flush to get the user ID
+    
+    # Create custom subscription if prices are provided
+    if user_data.custom_monthly_price or user_data.custom_annual_price:
+        await create_or_update_custom_subscription(
+            db=db,
+            user=new_user,
+            monthly_price=Decimal(str(user_data.custom_monthly_price)) if user_data.custom_monthly_price else None,
+            annual_price=Decimal(str(user_data.custom_annual_price)) if user_data.custom_annual_price else None
+        )
+    
     db.commit()
     db.refresh(new_user)
-    return new_user
+    
+    # Format response
+    response = UserWithSubscription.from_orm(new_user)
+    if new_user.subscription:
+        response.subscription = {
+            "plan_type": new_user.subscription.plan_type,
+            "billing_interval": new_user.subscription.billing_interval,
+            "status": new_user.subscription.status
+        }
+    
+    return response
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
@@ -83,11 +112,15 @@ async def delete_user(
             detail="Cannot delete admin users"
         )
 
+    # Cancel subscription if exists
+    if user.subscription:
+        await cancel_subscription(user.subscription.stripe_subscription_id)
+
     db.delete(user)
     db.commit()
     return None
 
-@router.get("", response_model=List[UserProfile])
+@router.get("", response_model=List[UserWithSubscription])
 async def get_all_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -104,7 +137,20 @@ async def get_all_users(
         )
     
     users = db.query(User).offset(skip).limit(limit).all()
-    return users
+    
+    # Format response with subscription info
+    response = []
+    for user in users:
+        user_data = UserWithSubscription.from_orm(user)
+        if user.subscription:
+            user_data.subscription = {
+                "plan_type": user.subscription.plan_type,
+                "billing_interval": user.subscription.billing_interval,
+                "status": user.subscription.status
+            }
+        response.append(user_data)
+    
+    return response
 
 @router.get("/me", response_model=UserProfile)
 async def get_user_profile(current_user: User = Depends(get_current_user)):
@@ -113,15 +159,24 @@ async def get_user_profile(current_user: User = Depends(get_current_user)):
     """
     return current_user
 
-@router.put("/me", response_model=UserProfile)
+@router.put("/me", response_model=UserWithSubscription)
 async def update_user_profile(
-    user_update: UserUpdate,
+    user_update: UserAdminUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Update current user's profile
     """
+    # Only admin can update certain fields
+    if current_user.role != "admin":
+        restricted_fields = {"role", "storage_limit_bytes", "max_users", "custom_monthly_price", "custom_annual_price"}
+        if any(field in user_update.dict(exclude_unset=True) for field in restricted_fields):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update these fields"
+            )
+
     # Check if email is being updated and if it's already taken
     if user_update.email and user_update.email != current_user.email:
         existing_user = db.query(User).filter(User.email == user_update.email).first()
@@ -132,12 +187,32 @@ async def update_user_profile(
             )
 
     # Update user fields
-    for field, value in user_update.model_dump(exclude_unset=True).items():
-        setattr(current_user, field, value)
+    for field, value in user_update.dict(exclude_unset=True).items():
+        if field not in ['custom_monthly_price', 'custom_annual_price'] and value is not None:
+            setattr(current_user, field, value)
+
+    # Update custom subscription if prices are provided and user is admin
+    if current_user.role == "admin" and (user_update.custom_monthly_price is not None or user_update.custom_annual_price is not None):
+        await create_or_update_custom_subscription(
+            db=db,
+            user=current_user,
+            monthly_price=Decimal(str(user_update.custom_monthly_price)) if user_update.custom_monthly_price else None,
+            annual_price=Decimal(str(user_update.custom_annual_price)) if user_update.custom_annual_price else None
+        )
 
     db.commit()
     db.refresh(current_user)
-    return current_user 
+
+    # Format response
+    response = UserWithSubscription.from_orm(current_user)
+    if current_user.subscription:
+        response.subscription = {
+            "plan_type": current_user.subscription.plan_type,
+            "billing_interval": current_user.subscription.billing_interval,
+            "status": current_user.subscription.status
+        }
+
+    return response
 
 @router.put("/me/password", status_code=status.HTTP_200_OK)
 async def change_password(
