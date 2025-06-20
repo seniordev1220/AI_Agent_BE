@@ -45,6 +45,14 @@ def create_config() -> Dict[str, Any]:
             }
         }
     }
+
+    # Add file upload configuration
+    config["FILE_UPLOAD"] = {
+        "MAX_SIZE_BYTES": 10 * 1024 * 1024,  # 10MB in bytes
+        "ALLOWED_TYPES": ["application/pdf", "text/plain", "text/csv", "application/json", 
+                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+    }
     
     return config
 

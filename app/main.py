@@ -6,6 +6,7 @@ from .routes import auth, users, api_keys, agents, chat, model_settings, data_so
 from .database import engine, SessionLocal
 from .models import user, settings as settings_model, user_activity, price_plan, subscription, payment
 from .utils.db_init import create_default_admin, create_default_price_plans
+from .config import config
 import os
 
 load_dotenv()
@@ -45,7 +46,11 @@ origins = [
     "*",  # Allow all origins for the widget (you may want to restrict this in production)
 ]
 
-app = FastAPI(title="Finiite API")
+app = FastAPI(
+    title="Finiite API",
+    # Configure maximum request size to match file upload limit
+    max_request_size=config["FILE_UPLOAD"]["MAX_SIZE_BYTES"]
+)
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

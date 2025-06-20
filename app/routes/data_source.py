@@ -24,6 +24,7 @@ from ..services.size_tracking_service import SizeTrackingService
 from ..services.vector_service import VectorService
 from ..services.subscription_service import SubscriptionService
 from ..services.trial_service import TrialService
+from ..config import config
 import uuid
 from fastapi.responses import StreamingResponse, FileResponse
 import mimetypes
@@ -236,6 +237,20 @@ async def upload_file(
     try:
         # Check file size before processing
         file_size = os.fstat(file.file.fileno()).st_size
+        
+        # Check file size limit
+        if file_size > config["FILE_UPLOAD"]["MAX_SIZE_BYTES"]:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File size exceeds the maximum limit of {config['FILE_UPLOAD']['MAX_SIZE_BYTES'] / (1024 * 1024)}MB"
+            )
+            
+        # Check file type
+        if file.content_type not in config["FILE_UPLOAD"]["ALLOWED_TYPES"]:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"File type {file.content_type} is not supported. Supported types: {', '.join(config['FILE_UPLOAD']['ALLOWED_TYPES'])}"
+            )
         
         # Check storage limits
         if current_user.subscription:
