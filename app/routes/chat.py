@@ -1019,4 +1019,99 @@ async def create_message_with_api_key(
         current_user=user,
         request=request,
         db=db
+    )
+
+@router.post("/embed/{agent_id}/history", response_model=ChatHistoryResponse)
+async def get_chat_history_with_api_key(
+    agent_id: int,
+    api_key: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Get chat history using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get chat history using the existing endpoint logic
+    return await get_chat_history(
+        agent_id=agent_id,
+        current_user=user,
+        db=db
+    )
+
+@router.post("/embed/download/{file_id}")
+async def download_file_with_api_key(
+    file_id: int,
+    api_key: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Download a file using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Download file using the existing endpoint logic
+    return await download_file(
+        file_id=file_id,
+        current_user=user,
+        db=db
+    )
+
+@router.post("/embed/{agent_id}/web-search", response_model=ChatMessageResponse)
+async def web_search_with_api_key(
+    agent_id: int,
+    content: str = Form(...),
+    api_key: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Perform web search using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Perform web search using the existing endpoint logic
+    return await web_search(
+        agent_id=agent_id,
+        content=content,
+        current_user=user,
+        db=db
     ) 
