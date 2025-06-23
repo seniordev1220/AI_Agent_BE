@@ -29,6 +29,8 @@ import uuid
 from fastapi.responses import StreamingResponse, FileResponse
 import mimetypes
 from ..utils.activity_logger import log_activity
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 router = APIRouter(prefix="/data-sources", tags=["Data Sources"])
 
@@ -367,28 +369,41 @@ async def connect_slack(
 @router.post("/google-drive", response_model=VectorSourceResponse)
 async def connect_google_drive(
     data_source_name: str = Form(...),
-    folder_id: str = Form(...),
-    client_id: str = Form(...),
-    client_secret: str = Form(...),
-    refresh_token: str = Form(...),
-    load_recursively: bool = Form(False),
-    load_trashed_files: bool = Form(False),
+    file_ids: List[str] = Form(...),
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     try:
-        # Create connection settings with OAuth credentials
+        # Load service account credentials
+        credentials = service_account.Credentials.from_service_account_file(
+            os.getenv("GOOGLE_APPLICATION_CREDENTIALS"),
+            scopes=['https://www.googleapis.com/auth/drive.readonly']
+        )
+        
+        # Create Drive API service
+        drive_service = build('drive', 'v3', credentials=credentials)
+        
+        # Get file metadata and calculate total size
+        total_size = 0
+        file_metadata = []
+        for file_id in file_ids:
+            file = drive_service.files().get(
+                fileId=file_id,
+                fields="id, name, mimeType, size",
+                supportsAllDrives=True
+            ).execute()
+            
+            # Add size if available, or use exported size for Google Workspace files
+            if file.get('size'):
+                total_size += int(file.get('size', 0))
+            file_metadata.append(file)
+        
+        # Create connection settings for Google Drive
         connection_settings = {
-            "folder_id": folder_id,
-            "credentials": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "type": "authorized_user"
-            },
-            "load_recursively": load_recursively,
-            "load_trashed_files": load_trashed_files
+            "file_ids": file_ids,
+            "file_size": total_size,  # Add total size to connection settings
+            "file_metadata": file_metadata  # Store metadata for reference
         }
         
         # Initialize vector service
@@ -402,16 +417,29 @@ async def connect_google_drive(
             embedding_model="openai",
             db=db
         )
+
+        # Log activity
+        await log_activity(
+            db=db,
+            user_id=current_user.id,
+            activity_type="data_source_create",
+            description=f"Created Google Drive data source: {data_source_name}",
+            request=request,
+            metadata={
+                "data_source_id": data_source.id,
+                "source_type": "google_drive",
+                "name": data_source_name,
+                "file_size": total_size
+            }
+        )
         
         return data_source
         
     except Exception as e:
-        # Clean up the token file if something goes wrong
-        if token_file_path and os.path.exists(token_file_path):
-            os.remove(token_file_path)
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error connecting Google Drive data source: {str(e)}"
+            detail=f"Error connecting to Google Drive files: {str(e)}"
         )
 
 @router.post("/hubspot", response_model=VectorSourceResponse)
@@ -554,3 +582,4 @@ async def get_data_source_content(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving data source content: {str(e)}"
         )
+

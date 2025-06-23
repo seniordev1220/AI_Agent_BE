@@ -3,10 +3,11 @@ import openai
 # from google.generativeai import generate_embeddings
 from anthropic import Anthropic
 from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 import os
 
 class EmbeddingManager:
-    def __init__(self, model_name: str, api_key: str):
+    def __init__(self, model_name: str, api_key: str = None):
         self.model_name = model_name
         self.api_key = api_key
         
@@ -20,6 +21,8 @@ class EmbeddingManager:
             return await self._get_claude_embedding(text)
         elif "deepseek" in self.model_name:
             return await self._get_deepseek_embedding(text)
+        elif "fastembed" in self.model_name:
+            return await self._get_fastembed_embedding(text)
         else:
             raise ValueError(f"Unsupported embedding model: {self.model_name}")
             
@@ -35,4 +38,9 @@ class EmbeddingManager:
     #     )
         return response.embedding
         
+    async def _get_fastembed_embedding(self, text: str) -> List[float]:
+        embeddings = FastEmbedEmbeddings()
+        response = embeddings.embed_query(text)
+        return response
+
     # Implement other embedding methods similarly

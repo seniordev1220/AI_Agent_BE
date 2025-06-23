@@ -21,6 +21,7 @@ tiktoken
 langchain-community
 langchain-openai
 langchain-chroma
+langchain-google-community
 unstructured==0.10.30
 python-docx==1.0.1
 aiofiles
@@ -37,3 +38,7 @@ pypdf
 fpdf
 docx
 stripe
+fastembed
+google-auth
+google-auth-oauthlib
+google-api-python-client
