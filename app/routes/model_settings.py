@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
 from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from ..models.user import User
 from ..models.model_settings import ModelSettings
 from ..schemas.model_settings import ModelCreate, ModelUpdate, ModelResponse, ModelsResponse
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, create_access_token
 from ..utils.activity_logger import log_activity
+from ..utils.api_key_validator import validate_finiite_api_key
+from datetime import timedelta
+from ..config import config
 
 router = APIRouter(prefix="/models", tags=["Models"])
 
@@ -176,3 +179,35 @@ async def toggle_model(
     )
 
     return model_setting 
+
+@router.post("/embed/models", response_model=ModelsResponse)
+async def get_models_with_api_key(
+    api_key: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Get all models using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Generate access token for the user
+    access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+
+    # Get models using the existing function logic
+    return await get_models(current_user=user, db=db)

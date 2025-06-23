@@ -11,6 +11,7 @@ from ..utils.password import verify_password, get_password_hash
 from ..services.trial_service import TrialService
 from ..services.subscription_service import create_or_update_custom_subscription, cancel_subscription
 from decimal import Decimal
+from ..utils.api_key_validator import generate_finiite_api_key
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -38,13 +39,15 @@ async def create_user(
         )
 
     # Create new user
+    finiite_api_key = generate_finiite_api_key()
     new_user = User(
         email=user_data.email,
         first_name=user_data.first_name,
         last_name=user_data.last_name,
         role=user_data.role,
         storage_limit_bytes=user_data.storage_limit_bytes,
-        max_users=user_data.max_users
+        max_users=user_data.max_users,
+        finiite_api_key=finiite_api_key
     )
     
     if user_data.password:

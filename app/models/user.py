@@ -14,6 +14,7 @@ class User(Base):
     provider = Column(String, nullable=True)  # Add provider field
     role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
+    finiite_api_key = Column(String, unique=True, index=True)  # Add Finiite API key field
     
     # Storage and usage limits
     storage_limit_bytes = Column(BigInteger, default=1073741824)  # Default 1GB

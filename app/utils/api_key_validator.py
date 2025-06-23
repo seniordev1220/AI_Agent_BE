@@ -1,9 +1,25 @@
 import openai
 import anthropic
 import requests
+import secrets
+import string
 from fastapi import HTTPException
 from ..models.api_key import APIKey
 from ..schemas.api_key import Provider
+
+def generate_finiite_api_key() -> str:
+    # Define character set for API key generation
+    chars = string.ascii_letters + string.digits
+    # Generate a random string of 32 characters (excluding the prefix)
+    random_part = ''.join(secrets.choice(chars) for _ in range(32))
+    # Return the API key with 'fk_' prefix
+    return f"fk_{random_part}"
+
+async def validate_finiite_api_key(api_key: str) -> bool:
+    # Validate Finiite API key format
+    if not api_key.startswith('fk_') or len(api_key) != 35:  # 'fk_' + 32 chars
+        return False
+    return True
 
 async def validate_openai_key(api_key: str) -> bool:    
     try:
@@ -64,6 +80,7 @@ async def validate_api_key(provider: Provider, api_key: str) -> bool:
         Provider.ANTHROPIC: validate_anthropic_key,
         Provider.HUGGINGFACE: validate_huggingface_key,
         Provider.PERPLEXITY: validate_perplexity_key,
+        Provider.FINIITE: validate_finiite_api_key,
     }
     
     validator = validation_functions.get(provider)

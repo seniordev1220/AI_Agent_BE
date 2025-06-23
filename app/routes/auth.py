@@ -11,6 +11,7 @@ from ..config import config
 from ..services.settings import SettingsService
 from ..utils.activity_logger import log_activity
 from ..services.trial_service import TrialService
+from ..utils.api_key_validator import generate_finiite_api_key, validate_finiite_api_key
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -34,12 +35,14 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
     
     # Create new user
     hashed_password = get_password_hash(user.password)
+    finiite_api_key = generate_finiite_api_key()
     db_user = User(
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
         hashed_password=hashed_password,
-        provider="credentials"
+        provider="credentials",
+        finiite_api_key=finiite_api_key
     )
     db.add(db_user)
     db.commit()
@@ -128,11 +131,13 @@ def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
         db.commit()
     else:
         # Create new user
+        finiite_api_key = generate_finiite_api_key()
         db_user = User(
             email=user_data.email,
             first_name=user_data.first_name,
             last_name=user_data.last_name,
-            provider="google"
+            provider="google",
+            finiite_api_key=finiite_api_key
         )
         db.add(db_user)
         db.commit()
@@ -147,3 +152,23 @@ def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
         data={"sub": db_user.email}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/validate-finiite-key/{api_key}", response_model=UserResponse)
+async def validate_finiite_key(api_key: str, db: Session = Depends(get_db)):
+    """Validate Finiite API key and return user information"""
+    # Check if API key is valid
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(User.finiite_api_key == api_key).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return user

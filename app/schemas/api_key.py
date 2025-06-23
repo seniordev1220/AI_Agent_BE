@@ -10,6 +10,7 @@ class Provider(str, Enum):
     ANTHROPIC = "anthropic"
     HUGGINGFACE = "huggingface"
     PERPLEXITY = "perplexity"
+    FINIITE = "finiite"
 
 class APIKeyBase(BaseModel):
     provider: Provider

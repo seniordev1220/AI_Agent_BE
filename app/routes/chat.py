@@ -16,9 +16,10 @@ from ..schemas.chat import (
     ConnectedSource,
     FileAttachmentResponse
 )
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, create_access_token
 from ..utils.ai_client import get_ai_response_from_model, get_ai_response_from_vectorstore
 from ..services.vector_service import VectorService
+from ..utils.api_key_validator import validate_finiite_api_key
 import os
 import uuid
 import shutil
@@ -32,6 +33,7 @@ from docx import Document
 from ..utils.activity_logger import log_activity
 from ..services.trial_service import TrialService
 from datetime import datetime, timedelta
+from ..config import config
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -133,7 +135,7 @@ async def create_message(
     ).count()
     
     TrialService.check_trial_limits(db, current_user, 'messages_per_day', today_messages)
-
+    print(model)
     # Save user message
     user_message = ChatMessage(
         agent_id=agent_id,
@@ -971,3 +973,50 @@ async def get_widget_embed(
     """
     
     return HTMLResponse(content=widget_html) 
+
+@router.post("/embed/{agent_id}/messages", response_model=ChatMessageResponse)
+async def create_message_with_api_key(
+    agent_id: int,
+    content: str = Form(...),
+    model: str = Form(...),
+    api_key: str = Form(...),
+    files: List[UploadFile] = File(default=[]),
+    source_ids: str = Form(default="[]"),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Create a new chat message using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Generate access token for the user
+    access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
+
+    # Create message using the existing endpoint logic
+    return await create_message(
+        agent_id=agent_id,
+        content=content,
+        model=model,
+        files=files,
+        source_ids=source_ids,
+        current_user=user,
+        request=request,
+        db=db
+    ) 

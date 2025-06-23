@@ -20,6 +20,7 @@ class UserCreate(UserBase):
 class UserResponse(UserBase):
     id: int
     role: UserRole
+    finiite_api_key: str
 
     class Config:
         from_attributes = True
@@ -60,6 +61,7 @@ class UserInDB(UserBase):
     current_users: int
     created_at: datetime
     updated_at: datetime
+    finiite_api_key: str
 
     class Config:
         from_attributes = True
