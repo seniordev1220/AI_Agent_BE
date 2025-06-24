@@ -199,6 +199,10 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        # Update user's trial status
+        user.trial_status = 'active'
+        user.trial_end = datetime.utcnow()
+
         # Get subscription data directly from the session
         subscription_data = session.subscription
         
@@ -249,17 +253,27 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
             db.add(subscription)
             db.flush()
 
-        # Create payment record
-        payment = Payment(
-            user_id=user.id,
-            subscription_id=subscription.id,
-            stripe_payment_id=session.payment_intent or session.subscription.id,
-            amount=session.amount_total / 100 if session.amount_total else 0,  # Convert from cents to dollars
-            currency=session.currency.lower() if session.currency else 'usd',
-            status=session.payment_status,
-            payment_method='card'
-        )
-        db.add(payment)
+        # Generate payment ID - use payment_intent if available, otherwise use subscription ID
+        payment_id = session.payment_intent or session.subscription.id
+
+        # Check if payment record already exists
+        existing_payment = db.query(Payment).filter(
+            Payment.stripe_payment_id == payment_id
+        ).first()
+
+        if not existing_payment:
+            # Create payment record only if it doesn't exist
+            payment = Payment(
+                user_id=user.id,
+                subscription_id=subscription.id,
+                stripe_payment_id=payment_id,
+                amount=session.amount_total if session.amount_total else 0,  # Convert from cents to dollars
+                currency=session.currency.lower() if session.currency else 'usd',
+                status=session.payment_status,
+                payment_method='card'
+            )
+            db.add(payment)
+
         db.commit()
 
         # Log subscription activity
