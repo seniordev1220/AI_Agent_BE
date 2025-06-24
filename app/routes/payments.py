@@ -199,20 +199,22 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Retrieve subscription details
-        subscription_data = stripe.Subscription.retrieve(session.subscription)
+        # Get subscription data directly from the session
+        subscription_data = session.subscription
         
         # Get subscription items
-        subscription_items = stripe.SubscriptionItem.list(
-            subscription=subscription_data.id
-        )
+        subscription_items = []
+        if subscription_data and hasattr(subscription_data, 'items'):
+            items_list = subscription_data.items()
+            if hasattr(items_list, 'data'):
+                subscription_items = items_list.data
         
         # Get period dates from subscription items
         current_period_start = None
         current_period_end = None
         
-        if subscription_items and subscription_items.data:
-            for item in subscription_items.data:
+        if subscription_items:
+            for item in subscription_items:
                 if not current_period_start or item.current_period_start < current_period_start:
                     current_period_start = item.current_period_start
                 if not current_period_end or item.current_period_end > current_period_end:
@@ -239,12 +241,7 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
                 stripe_subscription_id=subscription_data.id,
                 plan_type=session.metadata.get('plan_type'),
                 billing_interval=session.metadata.get('billing_interval'),
-                base_seats=base_seats,
-                additional_seats=additional_seats,
-                total_seats=total_seats,
-                base_price=float(session.metadata.get('base_price', 0)),
-                additional_seats_price=float(session.metadata.get('additional_seats_price', 0)),
-                total_price=float(session.metadata.get('total_price', 0)),
+                seats=total_seats,  # Use total seats instead of separate base and additional seats
                 status=subscription_data.status,
                 current_period_start=datetime.fromtimestamp(current_period_start) if current_period_start else None,
                 current_period_end=datetime.fromtimestamp(current_period_end) if current_period_end else None
@@ -256,7 +253,7 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
         payment = Payment(
             user_id=user.id,
             subscription_id=subscription.id,
-            stripe_payment_id=session.payment_intent or session.subscription,
+            stripe_payment_id=session.payment_intent or session.subscription.id,
             amount=session.amount_total / 100 if session.amount_total else 0,  # Convert from cents to dollars
             currency=session.currency.lower() if session.currency else 'usd',
             status=session.payment_status,
@@ -276,12 +273,7 @@ async def store_subscription(session: stripe.checkout.Session, db: Session):
                 "stripe_subscription_id": subscription_data.id,
                 "plan_type": session.metadata.get('plan_type'),
                 "billing_interval": session.metadata.get('billing_interval'),
-                "base_seats": base_seats,
-                "additional_seats": additional_seats,
-                "total_seats": total_seats,
-                "base_price": float(session.metadata.get('base_price', 0)),
-                "additional_seats_price": float(session.metadata.get('additional_seats_price', 0)),
-                "total_price": float(session.metadata.get('total_price', 0)),
+                "seats": total_seats,
                 "status": subscription_data.status,
                 "is_new": is_new_subscription
             }
