@@ -12,6 +12,7 @@ from ..services.trial_service import TrialService
 from ..services.subscription_service import create_or_update_custom_subscription, cancel_subscription
 from decimal import Decimal
 from ..utils.api_key_validator import generate_finiite_api_key
+from ..models.user_activity import UserActivity
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -119,6 +120,10 @@ async def delete_user(
     if user.subscription:
         await cancel_subscription(user.subscription.stripe_subscription_id)
 
+    # Delete all user activities first
+    db.query(UserActivity).filter(UserActivity.user_id == user_id).delete()
+    
+    # Delete the user
     db.delete(user)
     db.commit()
     return None
@@ -144,13 +149,32 @@ async def get_all_users(
     # Format response with subscription info
     response = []
     for user in users:
-        user_data = UserWithSubscription.from_orm(user)
+        # First convert user to dict to avoid validation errors
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "is_active": user.is_active,
+            "storage_limit_bytes": user.storage_limit_bytes,
+            "storage_used_bytes": user.storage_used_bytes,
+            "max_users": user.max_users,
+            "current_users": user.current_users,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+            "finiite_api_key": user.finiite_api_key,
+            "subscription": None
+        }
+        
         if user.subscription:
-            user_data.subscription = {
+            user_dict["subscription"] = {
                 "plan_type": user.subscription.plan_type,
                 "billing_interval": user.subscription.billing_interval,
                 "status": user.subscription.status
             }
+        
+        user_data = UserWithSubscription(**user_dict)
         response.append(user_data)
     
     return response
@@ -276,3 +300,90 @@ def get_trial_status(
         trial_status['limits'] = TrialService.get_trial_limits()
     
     return trial_status
+
+@router.put("/{user_id}", response_model=UserWithSubscription)
+async def update_user(
+    user_id: int,
+    user_update: UserAdminUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a user's information (admin only)
+    """
+    # Check if user is admin
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update user information"
+        )
+
+    # Get the user to update
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Check if email is being updated and if it's already taken
+    if user_update.email and user_update.email != user.email:
+        existing_user = db.query(User).filter(User.email == user_update.email).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+    # Update user fields
+    update_data = user_update.dict(exclude_unset=True)
+    
+    # Handle password update if provided
+    if "password" in update_data and update_data["password"]:
+        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
+
+    # Update custom subscription if prices are provided
+    custom_monthly_price = update_data.pop("custom_monthly_price", None)
+    custom_annual_price = update_data.pop("custom_annual_price", None)
+    
+    if custom_monthly_price is not None or custom_annual_price is not None:
+        await create_or_update_custom_subscription(
+            db=db,
+            user=user,
+            monthly_price=Decimal(str(custom_monthly_price)) if custom_monthly_price else None,
+            annual_price=Decimal(str(custom_annual_price)) if custom_annual_price else None
+        )
+
+    # Update remaining fields
+    for field, value in update_data.items():
+        setattr(user, field, value)
+
+    db.commit()
+    db.refresh(user)
+
+    # Convert user to dict to avoid validation errors
+    user_dict = {
+        "id": user.id,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "role": user.role,
+        "is_active": user.is_active,
+        "storage_limit_bytes": user.storage_limit_bytes,
+        "storage_used_bytes": user.storage_used_bytes,
+        "max_users": user.max_users,
+        "current_users": user.current_users,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "finiite_api_key": user.finiite_api_key,
+        "subscription": None
+    }
+    
+    if user.subscription:
+        user_dict["subscription"] = {
+            "plan_type": user.subscription.plan_type,
+            "billing_interval": user.subscription.billing_interval,
+            "status": user.subscription.status
+        }
+    
+    return UserWithSubscription(**user_dict)
