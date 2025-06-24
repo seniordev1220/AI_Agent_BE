@@ -4,6 +4,7 @@ from ..models.price_plan import PricePlan
 from .password import get_password_hash
 from decimal import Decimal
 from ..config import config
+from .api_key_validator import generate_finiite_api_key
 
 def create_default_admin(db: Session) -> None:
     """
@@ -23,7 +24,8 @@ def create_default_admin(db: Session) -> None:
         last_name="Awan",
         hashed_password=get_password_hash("admin$1M"),
         role="admin",
-        is_active=True
+        is_active=True,
+        finiite_api_key=generate_finiite_api_key()
     )
     
     db.add(admin_user)

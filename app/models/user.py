@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..database import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "users"
@@ -14,6 +15,7 @@ class User(Base):
     provider = Column(String, nullable=True)  # Add provider field
     role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
+    is_superuser = Column(Boolean, default=False)
     finiite_api_key = Column(String, unique=True, index=True)  # Add Finiite API key field
     
     # Storage and usage limits
@@ -25,8 +27,12 @@ class User(Base):
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
     trial_status = Column(String, default='active')  # active, expired
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    # Brand relationship
+    brand_id = Column(Integer, ForeignKey("brand_settings.id"))
+    brand = relationship("BrandSettings", back_populates="users")
     
     # Add relationship to Agent model
     agents = relationship("Agent", back_populates="user")
