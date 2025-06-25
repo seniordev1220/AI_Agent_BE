@@ -16,10 +16,11 @@ def get_price_plans(
     db: Session = Depends(get_db),
     active_only: bool = True
 ):
-    """Get all price plans"""
+    """Get all price plans, excluding custom plans"""
     query = db.query(PricePlanModel)
     if active_only:
         query = query.filter(PricePlanModel.is_active == True)
+    query = query.filter(PricePlanModel.is_custom == False)
     return query.all()
 
 @router.get("/{plan_id}", response_model=PricePlan)
