@@ -13,6 +13,8 @@ from ..services.subscription_service import SubscriptionService
 from decimal import Decimal
 from ..utils.api_key_validator import generate_finiite_api_key
 from ..models.user_activity import UserActivity
+from ..models.chat import ChatMessage
+from ..models.payment import Payment
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -56,6 +58,13 @@ async def create_user(
     
     db.add(new_user)
     db.flush()  # Flush to get the user ID
+    
+    # Create Stripe customer
+    try:
+        customer_id = await SubscriptionService.create_stripe_customer(new_user)
+        new_user.stripe_customer_id = customer_id
+    except Exception as e:
+        print(f"Warning: Could not create Stripe customer: {str(e)}")
     
     # Create custom subscription if prices are provided
     if user_data.custom_monthly_price or user_data.custom_annual_price:
@@ -121,20 +130,48 @@ async def delete_user(
             detail="Cannot delete admin users"
         )
 
-    # Cancel subscription in Stripe if exists
-    if user.subscription:
-        await SubscriptionService.cancel_subscription(user.subscription.stripe_subscription_id)
+    try:
+        # Ensure user has a Stripe customer ID if they don't already have one
+        if not user.stripe_customer_id:
+            try:
+                user.stripe_customer_id = await SubscriptionService.create_stripe_customer(user)
+                db.flush()
+            except Exception as e:
+                print(f"Warning: Could not create Stripe customer: {str(e)}")
 
-    # Delete all user activities first
-    db.query(UserActivity).filter(UserActivity.user_id == user_id).delete()
-    
-    # Delete all subscriptions for this user
-    db.query(Subscription).filter(Subscription.user_id == user_id).delete()
-    
-    # Delete the user
-    db.delete(user)
-    db.commit()
-    return None
+        # Only try to cancel Stripe subscription if it exists
+        if user.subscription and user.subscription.stripe_subscription_id:
+            try:
+                await SubscriptionService.cancel_subscription(user.subscription.stripe_subscription_id)
+            except Exception as e:
+                print(f"Warning: Could not cancel Stripe subscription: {str(e)}")
+
+        # Delete records in the correct order to respect foreign key constraints
+        
+        # 1. Delete user activities
+        db.query(UserActivity).filter(UserActivity.user_id == user_id).delete()
+        
+        # 2. Delete chat messages
+        db.query(ChatMessage).filter(ChatMessage.user_id == user_id).delete()
+        
+        # 3. Delete payments
+        db.query(Payment).filter(Payment.user_id == user_id).delete()
+        
+        # 4. Delete subscription
+        db.query(Subscription).filter(Subscription.user_id == user_id).delete()
+        
+        # 5. Delete the user
+        db.delete(user)
+        
+        db.commit()
+        return None
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting user: {str(e)}"
+        )
 
 @router.get("", response_model=List[UserWithSubscription])
 async def get_all_users(
@@ -225,6 +262,14 @@ async def update_user_profile(
     for field, value in user_update.dict(exclude_unset=True).items():
         if field not in ['custom_monthly_price', 'custom_annual_price'] and value is not None:
             setattr(current_user, field, value)
+
+    # Create Stripe customer if it doesn't exist
+    if not current_user.stripe_customer_id:
+        try:
+            customer_id = await SubscriptionService.create_stripe_customer(current_user)
+            current_user.stripe_customer_id = customer_id
+        except Exception as e:
+            print(f"Warning: Could not create Stripe customer: {str(e)}")
 
     # Update custom subscription if prices are provided and user is admin
     if current_user.role == "admin" and (user_update.custom_monthly_price is not None or user_update.custom_annual_price is not None):

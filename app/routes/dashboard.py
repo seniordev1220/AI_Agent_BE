@@ -61,6 +61,8 @@ async def get_dashboard_stats(
         func.count(ChatMessage.id).label('message_count')
     ).join(
         ChatMessage, Agent.id == ChatMessage.agent_id
+    ).filter(
+        Agent.user_id == current_user.id  # Only get agents created by current user
     )
     if date_filter:
         agent_query = agent_query.filter(*date_filter)
