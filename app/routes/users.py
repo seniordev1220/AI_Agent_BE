@@ -121,12 +121,15 @@ async def delete_user(
             detail="Cannot delete admin users"
         )
 
-    # Cancel subscription if exists
+    # Cancel subscription in Stripe if exists
     if user.subscription:
         await SubscriptionService.cancel_subscription(user.subscription.stripe_subscription_id)
 
     # Delete all user activities first
     db.query(UserActivity).filter(UserActivity.user_id == user_id).delete()
+    
+    # Delete all subscriptions for this user
+    db.query(Subscription).filter(Subscription.user_id == user_id).delete()
     
     # Delete the user
     db.delete(user)

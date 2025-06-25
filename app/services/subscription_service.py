@@ -228,6 +228,15 @@ class SubscriptionService:
         db.commit()
         return subscription
 
+    @staticmethod
+    async def cancel_subscription(stripe_subscription_id: str) -> None:
+        """Cancel a Stripe subscription."""
+        if stripe_subscription_id:
+            try:
+                stripe.Subscription.delete(stripe_subscription_id)
+            except stripe.error.StripeError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
 async def create_or_update_custom_subscription(
     db: Session,
     user: User,
@@ -336,14 +345,6 @@ async def create_or_update_custom_subscription(
     
     db.commit()
     return subscription
-
-async def cancel_subscription(stripe_subscription_id: str) -> None:
-    """Cancel a Stripe subscription."""
-    if stripe_subscription_id:
-        try:
-            stripe.Subscription.delete(stripe_subscription_id)
-        except stripe.error.StripeError as e:
-            raise HTTPException(status_code=400, detail=str(e))
 
 async def get_subscription_url(price_id: str, user_email: str) -> str:
     """Get Stripe Checkout URL for subscription."""
