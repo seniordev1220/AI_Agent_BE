@@ -1,6 +1,6 @@
+from typing import Optional, List
 from pydantic import BaseModel, EmailStr, constr
 from enum import Enum
-from typing import Optional, List
 from datetime import datetime
 
 class UserRole(str, Enum):
@@ -62,6 +62,7 @@ class UserInDB(UserBase):
     created_at: datetime
     updated_at: datetime
     finiite_api_key: str
+    stripe_customer_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -69,11 +70,25 @@ class UserInDB(UserBase):
 class User(UserInDB):
     pass
 
+class SubscriptionInfo(BaseModel):
+    plan_type: str
+    billing_interval: str
+    status: str
+    stripe_customer_id: Optional[str] = None
+    stripe_price_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class UserWithSubscription(User):
-    subscription: Optional[dict] = None
+    subscription: Optional[SubscriptionInfo] = None
 
 class UserProfile(UserResponse):
     # Add any additional fields you want to show in profile
+    trial_start: Optional[datetime]
+    trial_end: Optional[datetime]
+    trial_status: Optional[str]
+
     class Config:
         from_attributes = True
 

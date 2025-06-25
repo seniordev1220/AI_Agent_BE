@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from ..models.user import User
 from ..models.subscription import Subscription
 from ..models.price_plan import PricePlan
@@ -97,6 +97,136 @@ class SubscriptionService:
         if not limits:
             return False
         return limits["workflow_automation"]
+
+    @staticmethod
+    async def create_stripe_customer(user: User) -> str:
+        """Create a Stripe customer for a user."""
+        try:
+            customer = stripe.Customer.create(
+                email=user.email,
+                name=f"{user.first_name} {user.last_name}".strip(),
+                metadata={
+                    "user_id": str(user.id)
+                }
+            )
+            return customer.id
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @staticmethod
+    async def create_stripe_price(
+        amount: int,
+        interval: str,
+        product_name: str,
+        metadata: Dict = None
+    ) -> Tuple[str, str]:
+        """
+        Create a Stripe product and price.
+        Returns a tuple of (product_id, price_id)
+        """
+        try:
+            # Create product
+            product = stripe.Product.create(
+                name=product_name,
+                metadata=metadata or {}
+            )
+
+            # Create price
+            price = stripe.Price.create(
+                product=product.id,
+                unit_amount=amount,  # amount in cents
+                currency="usd",
+                recurring={"interval": interval},  # "month" or "year"
+                metadata=metadata or {}
+            )
+
+            return product.id, price.id
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @staticmethod
+    async def create_or_update_admin_subscription(
+        db: Session,
+        user: User,
+        monthly_amount: Optional[int] = None,
+        annual_amount: Optional[int] = None,
+        plan_name: str = None
+    ) -> Subscription:
+        """Create or update a subscription for a user added by admin."""
+        
+        # Create Stripe customer if not exists
+        if not user.stripe_customer_id:
+            customer_id = await SubscriptionService.create_stripe_customer(user)
+            user.stripe_customer_id = customer_id
+            db.flush()
+
+        # Create or get custom price plan
+        custom_plan = db.query(PricePlan).filter(
+            PricePlan.is_custom == True,
+            PricePlan.id == user.subscription.price_plan_id if user.subscription else None
+        ).first()
+
+        if not custom_plan:
+            custom_plan = PricePlan(
+                name=plan_name or f"Custom Plan - {user.email}",
+                monthly_price=Decimal(monthly_amount or 0) / 100,  # Convert cents to dollars
+                annual_price=Decimal(annual_amount or 0) / 100,  # Convert cents to dollars
+                included_seats=user.max_users,
+                storage_limit_bytes=user.storage_limit_bytes,
+                features={
+                    "custom": True,
+                    "storage_limit_bytes": user.storage_limit_bytes,
+                    "max_users": user.max_users,
+                    "workflow_automation": True
+                },
+                is_custom=True
+            )
+            db.add(custom_plan)
+            db.flush()
+
+        # Create Stripe products and prices if needed
+        metadata = {"user_id": str(user.id), "plan_id": str(custom_plan.id)}
+        
+        if monthly_amount and not custom_plan.stripe_price_id_monthly:
+            product_id, price_id = await SubscriptionService.create_stripe_price(
+                amount=monthly_amount,
+                interval="month",
+                product_name=f"{plan_name or 'Custom Plan'} (Monthly)",
+                metadata=metadata
+            )
+            custom_plan.stripe_product_id = product_id
+            custom_plan.stripe_price_id_monthly = price_id
+
+        if annual_amount and not custom_plan.stripe_price_id_annual:
+            product_id, price_id = await SubscriptionService.create_stripe_price(
+                amount=annual_amount,
+                interval="year",
+                product_name=f"{plan_name or 'Custom Plan'} (Annual)",
+                metadata=metadata
+            )
+            custom_plan.stripe_product_id = product_id
+            custom_plan.stripe_price_id_annual = price_id
+
+        # Create or update subscription
+        if not user.subscription:
+            subscription = Subscription(
+                user_id=user.id,
+                price_plan_id=custom_plan.id,
+                plan_type="custom",
+                billing_interval="monthly" if monthly_amount else "annual",
+                seats=user.max_users,
+                status="active"
+            )
+            db.add(subscription)
+        else:
+            user.subscription.price_plan_id = custom_plan.id
+            user.subscription.plan_type = "custom"
+            user.subscription.billing_interval = "monthly" if monthly_amount else "annual"
+            user.subscription.seats = user.max_users
+            subscription = user.subscription
+
+        db.commit()
+        return subscription
 
 async def create_or_update_custom_subscription(
     db: Session,

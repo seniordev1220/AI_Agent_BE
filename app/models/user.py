@@ -17,6 +17,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
     finiite_api_key = Column(String, unique=True, index=True)  # Add Finiite API key field
+    stripe_customer_id = Column(String, unique=True, nullable=True)  # Add Stripe customer ID field
     
     # Storage and usage limits
     storage_limit_bytes = Column(BigInteger, default=1073741824)  # Default 1GB
@@ -26,7 +27,7 @@ class User(Base):
     
     trial_start = Column(DateTime(timezone=True), nullable=True)
     trial_end = Column(DateTime(timezone=True), nullable=True)
-    trial_status = Column(String, default='active')  # active, expired
+    trial_status = Column(String, default='free_trial')  # Possible values: free_trial (initial signup), active (after billing), expired
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     

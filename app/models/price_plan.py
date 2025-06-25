@@ -13,12 +13,13 @@ class PricePlan(Base):
     included_seats = Column(Integer, default=1)
     additional_seat_price = Column(Numeric(10, 2))
     storage_limit_bytes = Column(BigInteger, default=1073741824)  # Default 1GB
-    features = Column(JSON, nullable=False)  # Store features as JSON array
+    features = Column(JSON, nullable=False, default=dict)  # Store features as JSON dictionary
     is_best_value = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     is_custom = Column(Boolean, default=False)  # Flag for custom plans
-    stripe_price_id_monthly = Column(String)
-    stripe_price_id_annual = Column(String)
+    stripe_product_id = Column(String, unique=True, nullable=True)  # Stripe product ID
+    stripe_price_id_monthly = Column(String, unique=True, nullable=True)  # Monthly price ID
+    stripe_price_id_annual = Column(String, unique=True, nullable=True)  # Annual price ID
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

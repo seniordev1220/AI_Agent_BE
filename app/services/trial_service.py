@@ -19,7 +19,7 @@ class TrialService:
         now = datetime.now(timezone.utc)
         user.trial_start = now
         user.trial_end = now + timedelta(days=TrialService.TRIAL_DURATION_DAYS)
-        user.trial_status = 'active'
+        user.trial_status = 'free_trial'  # Set to free_trial when user first signs up
         db.commit()
 
     @staticmethod
@@ -41,7 +41,7 @@ class TrialService:
                 'trial_active': True,
                 'trial_expired': False,
                 'days_remaining': TrialService.TRIAL_DURATION_DAYS,
-                'message': f'Trial started. {TrialService.TRIAL_DURATION_DAYS} days remaining'
+                'message': f'Free trial started. {TrialService.TRIAL_DURATION_DAYS} days remaining'
             }
 
         now = datetime.now(timezone.utc)

@@ -9,7 +9,7 @@ from ..models.subscription import Subscription
 from ..utils.auth import get_current_user, get_current_admin_user
 from ..utils.password import verify_password, get_password_hash
 from ..services.trial_service import TrialService
-from ..services.subscription_service import create_or_update_custom_subscription, cancel_subscription
+from ..services.subscription_service import SubscriptionService
 from decimal import Decimal
 from ..utils.api_key_validator import generate_finiite_api_key
 from ..models.user_activity import UserActivity
@@ -59,11 +59,15 @@ async def create_user(
     
     # Create custom subscription if prices are provided
     if user_data.custom_monthly_price or user_data.custom_annual_price:
-        await create_or_update_custom_subscription(
+        monthly_amount = int(Decimal(str(user_data.custom_monthly_price or 0)) * 100)  # Convert to cents
+        annual_amount = int(Decimal(str(user_data.custom_annual_price or 0)) * 100)  # Convert to cents
+        
+        await SubscriptionService.create_or_update_admin_subscription(
             db=db,
             user=new_user,
-            monthly_price=Decimal(str(user_data.custom_monthly_price)) if user_data.custom_monthly_price else None,
-            annual_price=Decimal(str(user_data.custom_annual_price)) if user_data.custom_annual_price else None
+            monthly_amount=monthly_amount if user_data.custom_monthly_price else None,
+            annual_amount=annual_amount if user_data.custom_annual_price else None,
+            plan_name=f"Custom Plan - {new_user.email}"
         )
     
     db.commit()
@@ -75,7 +79,8 @@ async def create_user(
         response.subscription = {
             "plan_type": new_user.subscription.plan_type,
             "billing_interval": new_user.subscription.billing_interval,
-            "status": new_user.subscription.status
+            "status": new_user.subscription.status,
+            "stripe_customer_id": new_user.stripe_customer_id
         }
     
     return response
@@ -118,7 +123,7 @@ async def delete_user(
 
     # Cancel subscription if exists
     if user.subscription:
-        await cancel_subscription(user.subscription.stripe_subscription_id)
+        await SubscriptionService.cancel_subscription(user.subscription.stripe_subscription_id)
 
     # Delete all user activities first
     db.query(UserActivity).filter(UserActivity.user_id == user_id).delete()
@@ -220,11 +225,15 @@ async def update_user_profile(
 
     # Update custom subscription if prices are provided and user is admin
     if current_user.role == "admin" and (user_update.custom_monthly_price is not None or user_update.custom_annual_price is not None):
-        await create_or_update_custom_subscription(
+        monthly_amount = int(Decimal(str(user_update.custom_monthly_price or 0)) * 100)  # Convert to cents
+        annual_amount = int(Decimal(str(user_update.custom_annual_price or 0)) * 100)  # Convert to cents
+        
+        await SubscriptionService.create_or_update_admin_subscription(
             db=db,
             user=current_user,
-            monthly_price=Decimal(str(user_update.custom_monthly_price)) if user_update.custom_monthly_price else None,
-            annual_price=Decimal(str(user_update.custom_annual_price)) if user_update.custom_annual_price else None
+            monthly_amount=monthly_amount if user_update.custom_monthly_price else None,
+            annual_amount=annual_amount if user_update.custom_annual_price else None,
+            plan_name=f"Custom Plan - {current_user.email}"
         )
 
     db.commit()
@@ -236,7 +245,8 @@ async def update_user_profile(
         response.subscription = {
             "plan_type": current_user.subscription.plan_type,
             "billing_interval": current_user.subscription.billing_interval,
-            "status": current_user.subscription.status
+            "status": current_user.subscription.status,
+            "stripe_customer_id": current_user.stripe_customer_id
         }
 
     return response
@@ -309,16 +319,14 @@ async def update_user(
     db: Session = Depends(get_db)
 ):
     """
-    Update a user's information (admin only)
+    Update a user (admin only)
     """
-    # Check if user is admin
     if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update user information"
+            detail="Not authorized to update users"
         )
 
-    # Get the user to update
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -336,54 +344,34 @@ async def update_user(
             )
 
     # Update user fields
-    update_data = user_update.dict(exclude_unset=True)
-    
-    # Handle password update if provided
-    if "password" in update_data and update_data["password"]:
-        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
+    for field, value in user_update.dict(exclude_unset=True).items():
+        if field not in ['custom_monthly_price', 'custom_annual_price'] and value is not None:
+            setattr(user, field, value)
 
     # Update custom subscription if prices are provided
-    custom_monthly_price = update_data.pop("custom_monthly_price", None)
-    custom_annual_price = update_data.pop("custom_annual_price", None)
-    
-    if custom_monthly_price is not None or custom_annual_price is not None:
-        await create_or_update_custom_subscription(
+    if user_update.custom_monthly_price is not None or user_update.custom_annual_price is not None:
+        monthly_amount = int(Decimal(str(user_update.custom_monthly_price or 0)) * 100)  # Convert to cents
+        annual_amount = int(Decimal(str(user_update.custom_annual_price or 0)) * 100)  # Convert to cents
+        
+        await SubscriptionService.create_or_update_admin_subscription(
             db=db,
             user=user,
-            monthly_price=Decimal(str(custom_monthly_price)) if custom_monthly_price else None,
-            annual_price=Decimal(str(custom_annual_price)) if custom_annual_price else None
+            monthly_amount=monthly_amount if user_update.custom_monthly_price else None,
+            annual_amount=annual_amount if user_update.custom_annual_price else None,
+            plan_name=f"Custom Plan - {user.email}"
         )
-
-    # Update remaining fields
-    for field, value in update_data.items():
-        setattr(user, field, value)
 
     db.commit()
     db.refresh(user)
 
-    # Convert user to dict to avoid validation errors
-    user_dict = {
-        "id": user.id,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "role": user.role,
-        "is_active": user.is_active,
-        "storage_limit_bytes": user.storage_limit_bytes,
-        "storage_used_bytes": user.storage_used_bytes,
-        "max_users": user.max_users,
-        "current_users": user.current_users,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at,
-        "finiite_api_key": user.finiite_api_key,
-        "subscription": None
-    }
-    
+    # Format response
+    response = UserWithSubscription.from_orm(user)
     if user.subscription:
-        user_dict["subscription"] = {
+        response.subscription = {
             "plan_type": user.subscription.plan_type,
             "billing_interval": user.subscription.billing_interval,
-            "status": user.subscription.status
+            "status": user.subscription.status,
+            "stripe_customer_id": user.stripe_customer_id
         }
-    
-    return UserWithSubscription(**user_dict)
+
+    return response
