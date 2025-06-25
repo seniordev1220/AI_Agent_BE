@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, desc, and_
+from sqlalchemy import func, desc, and_, case, select
 from sqlalchemy.orm import Session
 from typing import List, Dict
 from datetime import datetime, timedelta
@@ -8,6 +8,7 @@ from ..models.user import User
 from ..models.chat import ChatMessage
 from ..models.api_key import APIKey
 from ..models.agent import Agent
+from ..models.subscription import Subscription
 from ..utils.auth import get_current_user
 import tiktoken
 
@@ -37,11 +38,15 @@ async def get_dashboard_stats(
         start_date = end_date - timedelta(days=30)
         date_filter = (ChatMessage.created_at >= start_date, ChatMessage.created_at <= end_date)
 
-    # Get total number of users (all time) - only count users with role='user'
-    total_users = db.query(func.count(User.id)).filter(User.role == 'user').scalar()
-    
+    # Get total number of users (all time) - count based on subscription seats
+    # For a new user, this should be 1 or their subscription seats if they have one
+    if current_user.subscription:
+        total_users = current_user.subscription.seats
+    else:
+        total_users = 1
+
     # Get total messages (filtered if needed)
-    msg_query = db.query(ChatMessage)
+    msg_query = db.query(ChatMessage).filter(ChatMessage.user_id == current_user.id)
     if date_filter:
         msg_query = msg_query.filter(*date_filter)
     total_messages = msg_query.count()
@@ -88,17 +93,17 @@ async def get_user_token_usage(
 ):
     """Get token usage statistics per user"""
     
-    # Query all users and their messages - only for regular users
+    # Query messages only for the current user
     user_messages = db.query(
         User.email,
         ChatMessage.content
     ).join(
         ChatMessage, User.id == ChatMessage.user_id
     ).filter(
-        User.role == 'user'
+        User.id == current_user.id
     ).all()
     
-    # Calculate token usage per user
+    # Calculate token usage for the current user
     user_tokens = {}
     for email, content in user_messages:
         if content:
@@ -128,7 +133,7 @@ async def get_messages_by_date(
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
     
-    # Query message counts grouped by date - only for regular users
+    # Query message counts grouped by date - only for current user
     daily_messages = db.query(
         func.date(ChatMessage.created_at).label('date'),
         func.count(ChatMessage.id).label('message_count'),
@@ -139,7 +144,7 @@ async def get_messages_by_date(
         and_(
             ChatMessage.created_at >= start_date,
             ChatMessage.created_at <= end_date,
-            User.role == 'user'
+            User.id == current_user.id  # Only get messages for current user
         )
     ).group_by(
         func.date(ChatMessage.created_at),

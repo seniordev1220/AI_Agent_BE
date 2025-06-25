@@ -28,7 +28,7 @@ PRICE_IDS = {
         },
         "annual": {
             "base": "price_1RYUbeIqfRSqLdqDHRsoKANR",  # Base plan price
-            "seat": "price_1RYbbDIqfRSqLdqDsCr9GYkK"   # Annual seat price
+            "seat": "price_1RdyWhIqfRSqLdqDKHSnzMmV"   # Annual seat price
         }
     },
     "standard": {
@@ -38,7 +38,7 @@ PRICE_IDS = {
         },
         "annual": {
             "base": "price_1RYUcJIqfRSqLdqDuSTUw4be",
-            "seat": "price_1RYbc8IqfRSqLdqDmTYuLuDG"
+            "seat": "price_1RdyW7IqfRSqLdqDdu40LBZN"
         }
     },
     "smb": {
@@ -48,7 +48,7 @@ PRICE_IDS = {
         },
         "annual": {
             "base": "price_1RYUceIqfRSqLdqD9jNpbllm",
-            "seat": "price_1RYbcvIqfRSqLdqDmV5KWCev"
+            "seat": "price_1RdyPHIqfRSqLdqDL3Xo7Bb2"
         }
     }
 }
