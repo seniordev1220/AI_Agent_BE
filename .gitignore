@@ -88,3 +88,4 @@ dmypy.json
 uploads/
 pgvector/
 **/avatars/
+service-account.json
