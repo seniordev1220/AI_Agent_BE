@@ -254,16 +254,21 @@ async def get_ai_response_from_vectorstore(conversation: Dict) -> str:
     messages = conversation["messages"]
     agent_instructions = conversation.get("agent_instructions", "")
     references = conversation.get("references", [])
+    reference_enabled = conversation.get("reference_enabled", True)  # Default to True for backward compatibility
     
     # Create a system message that includes instructions for handling references
     system_prompt = f"""
     {agent_instructions}
     
-    When using information from referenced sources, please:
+    {
+    '''When using information from referenced sources, please:
     1. Cite the source in your response using [Source Name] format
     2. Only use information that is directly relevant to the query
     3. Maintain accuracy and context of the referenced information
     4. Synthesize information from multiple sources when appropriate
+    ''' if reference_enabled else 
+    '''Please provide responses based on the available context without citing or referencing specific sources.'''
+    }
     """
     
     # Format the conversation with references

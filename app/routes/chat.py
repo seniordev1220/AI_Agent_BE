@@ -266,14 +266,15 @@ async def create_message(
                 "provider": model_setting.provider,
                 "api_key": api_key.api_key,
                 "attachments": file_attachments,
-                "query": content
+                "query": content,
+                "reference_enabled": agent.reference_enabled
             }
             response_content = await get_ai_response_from_vectorstore(conversation)
 
             # Add connected sources to the response
             response_content = {
                 "content": response_content,
-                "connected_sources": connected_sources
+                "connected_sources": connected_sources if agent.reference_enabled else []
             }
         
         # If no results found in vector search

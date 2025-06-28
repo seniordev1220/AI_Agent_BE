@@ -20,32 +20,32 @@ def create_config() -> Dict[str, Any]:
     config["PRICE_IDS"] = {
         "individual": {
             "monthly": {
-                "base": "price_1RYQV6IqfRSqLdqDCfQgwH6M",  # Base plan price
-                "seat": "price_1RYbafIqfRSqLdqDJJt1Mtvz"   # $7 per additional seat
+                "base": "price_1ReJCrIqfRSqLdqDo5NuVCT4",  # Base plan price
+                "seat": "price_1ReJDUIqfRSqLdqDYM3qJLq7"   # $7 per additional seat
             },
             "annual": {
-                "base": "price_1RYUbeIqfRSqLdqDHRsoKANR",  # Base plan price
-                "seat": "price_1RdyWhIqfRSqLdqDKHSnzMmV"   # Annual seat price
+                "base": "price_1ReJDKIqfRSqLdqDt755nFEY",  # Base plan price
+                "seat": "price_1ReJDjIqfRSqLdqDfULeVSzQ"   # Annual seat price
             }
         },
         "standard": {
             "monthly": {
-                "base": "price_1RYQiZIqfRSqLdqDetDS4LyJ",
-                "seat": "price_1RYbbgIqfRSqLdqDpqIUHXdY"
+                "base": "price_1ReJFxIqfRSqLdqDhkn7ffZc",
+                "seat": "price_1ReJGVIqfRSqLdqDHWzNHtHx"
             },
             "annual": {
-                "base": "price_1RYUcJIqfRSqLdqDuSTUw4be",
-                "seat": "price_1RdyW7IqfRSqLdqDdu40LBZN"
+                "base": "price_1ReJGOIqfRSqLdqDvp7rF63J",
+                "seat": "price_1ReJGeIqfRSqLdqDfxhd6GlX"
             }
         },
         "smb": {
             "monthly": {
-                "base": "price_1RYQjGIqfRSqLdqDD7xwlV0w",
-                "seat": "price_1RYbcUIqfRSqLdqDvWcUSvv2"
+                "base": "price_1ReJI3IqfRSqLdqD6ue6NWe8",
+                "seat": "price_1ReJIVIqfRSqLdqDYfj18wR3"
             },
             "annual": {
-                "base": "price_1RYUceIqfRSqLdqD9jNpbllm",
-                "seat": "price_1RdyPHIqfRSqLdqDL3Xo7Bb2"
+                "base": "price_1ReJINIqfRSqLdqDcuvwt4q2",
+                "seat": "price_1ReJIdIqfRSqLdqDl85d6BWZ"
             }
         }
     }
