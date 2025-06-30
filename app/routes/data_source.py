@@ -14,6 +14,7 @@ from ..models.vector_source import VectorSource
 from ..schemas.vector_source import VectorSourceResponse, VectorSourceCreate
 from ..utils.auth import get_current_user
 from ..utils.data_source_validator import validate_connection_settings
+from ..utils.api_key_validator import validate_finiite_api_key
 # from ..services.ingestion_service import IngestionService
 # from ..schemas.processed_data import ProcessedDataResponse
 from ..utils.file_handler import FileHandler, save_upload_file
@@ -532,6 +533,85 @@ async def get_data_source_content(
     data_source = db.query(VectorSource).filter(
         VectorSource.id == data_source_id,
         VectorSource.user_id == current_user.id
+    ).first()
+    
+    if not data_source:
+        raise HTTPException(status_code=404, detail="Data source not found")
+    
+    try:
+        # Handle file upload type
+        if data_source.source_type == "file_upload":
+            file_path = data_source.connection_settings.get("file_path")
+            if not file_path or not os.path.exists(file_path):
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            # Get file mime type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                mime_type = "application/octet-stream"
+            
+            # Get original filename
+            filename = data_source.connection_settings.get("original_filename", os.path.basename(file_path))
+            
+            # Return file response with inline content disposition for viewing in browser
+            return FileResponse(
+                file_path,
+                media_type=mime_type,
+                filename=filename,
+                headers={
+                    "Content-Disposition": f'inline; filename="{filename}"'
+                }
+            )
+            
+        # Handle web scraper type
+        elif data_source.source_type == "web_scraper":
+            url = data_source.connection_settings.get("urls")
+            if not url:
+                raise HTTPException(status_code=404, detail="URL not found")
+            
+            # Return URL for frontend to handle
+            return {"url": url}
+            
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Content viewing not supported for source type: {data_source.source_type}"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving data source content: {str(e)}"
+        )
+
+@router.get("/embed/{data_source_id}/content")
+async def get_data_source_content_with_api_key(
+    data_source_id: int,
+    api_key: str,
+    db: Session = Depends(get_db)
+):
+    """Get data source content using Finiite API key authentication"""
+    # Validate Finiite API key
+    if not await validate_finiite_api_key(api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Finiite API key"
+        )
+    
+    # Get user by API key
+    user = db.query(User).filter(
+        User.finiite_api_key == api_key
+    ).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Get data source
+    data_source = db.query(VectorSource).filter(
+        VectorSource.id == data_source_id,
+        VectorSource.user_id == user.id
     ).first()
     
     if not data_source:
