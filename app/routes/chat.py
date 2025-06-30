@@ -673,6 +673,7 @@ async def web_search(
     try:
         import httpx
         import os
+        
         # Save user query message first
         user_message = ChatMessage(
             agent_id=agent_id,
@@ -693,46 +694,77 @@ async def web_search(
             )
 
         # Make request to Perplexity API
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.perplexity.ai/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                },
-                json={
+        try:
+            async with httpx.AsyncClient() as client:
+                request_data = {
                     "model": "sonar",
                     "messages": [
                         {"role": "system", "content": "Be precise and concise."},
                         {"role": "user", "content": content}
                     ]
                 }
+
+                response = await client.post(
+                    "https://api.perplexity.ai/chat/completions",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}"
+                    },
+                    json=request_data,
+                    timeout=30.0  # Add explicit timeout
+                )
+                
+                if response.status_code != 200:
+                    error_detail = f"Perplexity API error (Status {response.status_code}): {response.text}"
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=error_detail
+                    )
+
+                result = response.json()
+
+        except httpx.RequestError as e:
+            error_msg = f"Failed to connect to Perplexity API: {str(e)}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid JSON response from Perplexity API: {str(e)}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        except Exception as e:
+            error_msg = f"Unexpected error during API request: {str(e)}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
             )
             
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Perplexity API error: {response.text}"
-                )
-
-            result = response.json()
-            
-            # Format the response content with citations and search results
+        # Format the response content with citations and search results
+        try:
             ai_content = result["choices"][0]["message"]["content"]
+        except (KeyError, IndexError) as e:
+            error_msg = f"Unexpected response format from Perplexity API: {str(e)}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
             
-            # Store additional search information in the message
-            search_metadata = {
-                "citations": result.get("citations", []),
-                "search_results": result.get("search_results", []),
-                "choices": result.get("choices", [])
-            }
+        # Store additional search information in the message
+        search_metadata = {
+            "citations": result.get("citations", []),
+            "search_results": result.get("search_results", []),
+            "choices": result.get("choices", [])
+        }
             
-            # Create a formatted message that includes both the AI response and metadata
-            full_content = {
-                "content": ai_content,
-                "connected_sources": [],  # Web search doesn't use connected sources
-                "search_metadata": search_metadata
-            }
+        # Create a formatted message that includes both the AI response and metadata
+        full_content = {
+            "content": ai_content,
+            "connected_sources": [],  # Web search doesn't use connected sources
+            "search_metadata": search_metadata
+        }
 
         # Save the enhanced response as assistant's message with complete search data
         ai_message = ChatMessage(
