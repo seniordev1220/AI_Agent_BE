@@ -12,6 +12,7 @@ from ..services.settings import SettingsService
 from ..utils.activity_logger import log_activity
 from ..services.trial_service import TrialService
 from ..utils.api_key_validator import generate_finiite_api_key, validate_finiite_api_key
+from ..services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -45,6 +46,15 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
         finiite_api_key=finiite_api_key
     )
     db.add(db_user)
+    db.flush()  # Flush to get the user ID
+
+    # Create Stripe customer
+    try:
+        customer_id = await SubscriptionService.create_stripe_customer(db_user)
+        db_user.stripe_customer_id = customer_id
+    except Exception as e:
+        print(f"Warning: Could not create Stripe customer: {str(e)}")
+
     db.commit()
     db.refresh(db_user)
 
@@ -61,7 +71,8 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
         metadata={
             "provider": "credentials",
             "trial_start": db_user.trial_start.isoformat(),
-            "trial_end": db_user.trial_end.isoformat()
+            "trial_end": db_user.trial_end.isoformat(),
+            "stripe_customer_id": db_user.stripe_customer_id
         }
     )
 
@@ -117,7 +128,7 @@ async def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/google", response_model=Token)
-def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
+async def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
     """Handle Google OAuth authentication"""
     # Check if user exists
     db_user = db.query(User).filter(User.email == user_data.email).first()
@@ -140,11 +151,19 @@ def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
             finiite_api_key=finiite_api_key
         )
         db.add(db_user)
-        db.commit()
+        db.flush()  # Flush to get the user ID
+
+        # Create Stripe customer
+        try:
+            customer_id = await SubscriptionService.create_stripe_customer(db_user)
+            db_user.stripe_customer_id = customer_id
+            db.commit()
+        except Exception as e:
+            print(f"Warning: Could not create Stripe customer: {str(e)}")
+            # Still commit the user even if Stripe fails
+            db.commit()
+        
         db.refresh(db_user)
-    
-    db.commit()
-    db.refresh(db_user)
     
     # Create access token
     access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))

@@ -16,6 +16,7 @@ class User(Base):
     role = Column(String, default='user')  # Add role field with default value
     is_active = Column(Boolean, default=True)
     is_superuser = Column(Boolean, default=False)
+    is_test_account = Column(Boolean, default=False)  # Flag for test accounts
     finiite_api_key = Column(String, unique=True, index=True)  # Add Finiite API key field
     stripe_customer_id = Column(String, unique=True, nullable=True)  # Add Stripe customer ID field
     

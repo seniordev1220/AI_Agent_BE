@@ -94,6 +94,8 @@ async def create_message(
             VectorSource.id.in_(selected_source_ids)
         ).all()
     else:
+        # Refresh agent to get latest vector_sources_ids
+        db.refresh(agent)
         available_sources = db.query(VectorSource).filter(
             VectorSource.user_id == current_user.id,
             VectorSource.id.in_(agent.vector_sources_ids or [])

@@ -49,6 +49,10 @@ class SubscriptionService:
     @staticmethod
     def check_storage_limit(db: Session, user: User, additional_size_bytes: int = 0) -> bool:
         """Check if user is within storage limits"""
+        # Test accounts have no limits
+        if user.is_test_account:
+            return True
+            
         limits = SubscriptionService.get_user_limits(db, user)
         if not limits:
             return False
@@ -75,6 +79,10 @@ class SubscriptionService:
     @staticmethod
     def check_agent_limit(db: Session, user: User, current_count: Optional[int] = None) -> bool:
         """Check if user is within agent limits"""
+        # Test accounts have no limits
+        if user.is_test_account:
+            return True
+            
         limits = SubscriptionService.get_user_limits(db, user)
         if not limits:
             return False
@@ -350,8 +358,8 @@ async def get_subscription_url(price_id: str, user_email: str) -> str:
     """Get Stripe Checkout URL for subscription."""
     try:
         checkout_session = stripe.checkout.Session.create(
-            success_url="https://your-domain.com/success",
-            cancel_url="https://your-domain.com/cancel",
+            success_url="https://app.finiite.com/success",
+            cancel_url="https://app.finiite.com/cancel",
             mode="subscription",
             customer_email=user_email,
             line_items=[{

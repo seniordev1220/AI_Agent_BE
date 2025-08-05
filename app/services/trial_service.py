@@ -82,8 +82,8 @@ class TrialService:
         Check if the user has exceeded trial limits
         Returns True if within limits, False if exceeded
         """
-        # If user has subscription, no limits apply
-        if user.subscription:
+        # If user has subscription or is a test account, no limits apply
+        if user.subscription or user.is_test_account:
             return True
 
         # Check if trial is active

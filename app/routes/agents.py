@@ -294,9 +294,12 @@ async def update_agent(
                 
                 # Clear and update vector sources
                 db_agent.vector_sources = vector_sources
+                # Update vector_sources_ids to match the new vector sources
+                db_agent.vector_sources_ids = [vs.id for vs in vector_sources]
             else:
                 # Clear vector sources if empty list provided
                 db_agent.vector_sources = []
+                db_agent.vector_sources_ids = []
         
         try:
             db.commit()

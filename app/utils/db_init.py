@@ -5,6 +5,7 @@ from .password import get_password_hash
 from decimal import Decimal
 from ..config import config
 from .api_key_validator import generate_finiite_api_key
+from ..services.subscription_service import SubscriptionService
 
 def create_default_admin(db: Session) -> None:
     """
@@ -29,6 +30,59 @@ def create_default_admin(db: Session) -> None:
     )
     
     db.add(admin_user)
+    db.commit()
+
+def create_test_user(db: Session) -> None:
+    """
+    Create test user if it doesn't exist
+    """
+    test_email = "test@finiite.com"
+    
+    # Check if test user already exists
+    test_user = db.query(User).filter(User.email == test_email).first()
+    if test_user:
+        return
+    
+    # Create test user with standard plan limits
+    test_user = User(
+        email=test_email,
+        first_name="Test",
+        last_name="User",
+        hashed_password=get_password_hash("123456"),
+        role="user",
+        is_active=True,
+        is_test_account=True,  # Set test account flag
+        finiite_api_key=generate_finiite_api_key(),
+        trial_status="active",  # Set as active to bypass trial
+        max_users=2,  # Standard plan default seats
+        storage_limit_bytes=1024 * 1024 * 1024  # 1 GB (Standard plan storage limit)
+    )
+    
+    db.add(test_user)
+    db.flush()  # Flush to get the user ID
+    
+    # Create Stripe customer
+    try:
+        # Skip Stripe customer creation for test user
+        customer_id = None
+        test_user.stripe_customer_id = customer_id
+        
+        # Create subscription for standard plan
+        standard_plan = db.query(PricePlan).filter(PricePlan.name == "standard").first()
+        if standard_plan:
+            from ..models.subscription import Subscription
+            subscription = Subscription(
+                user_id=test_user.id,
+                price_plan_id=standard_plan.id,
+                plan_type="standard",
+                billing_interval="monthly",
+                seats=2,
+                status="active"
+            )
+            db.add(subscription)
+    except Exception as e:
+        print(f"Warning: Could not create Stripe customer for test user: {str(e)}")
+    
     db.commit()
 
 def create_default_price_plans(db: Session) -> None:

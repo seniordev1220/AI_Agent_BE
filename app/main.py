@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity, price_plans, embed
 from .database import engine, SessionLocal
 from .models import user, settings as settings_model, user_activity, price_plan, subscription, payment
-from .utils.db_init import create_default_admin, create_default_price_plans
+from .utils.db_init import create_default_admin, create_default_price_plans, create_test_user
 from .config import config
 import os
 
@@ -23,6 +23,7 @@ payment.Base.metadata.create_all(bind=engine)
 db = SessionLocal()
 try:
     create_default_admin(db)
+    create_test_user(db)
     create_default_price_plans(db)
 finally:
     db.close()
