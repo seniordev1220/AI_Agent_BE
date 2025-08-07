@@ -17,8 +17,12 @@ from ..services.activation_code_service import ActivationCodeService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-@router.post("/signup", response_model=UserResponse)
-async def signup(user: UserCreate, request: Request, db: Session = Depends(get_db)):
+@router.post("/signup/activation", response_model=UserResponse)
+async def signup_with_activation(user: UserCreate, request: Request, db: Session = Depends(get_db)):
+    """
+    Signup endpoint for users with activation codes.
+    These users get 10 agents and 1GB storage without trial period.
+    """
     # Check if email login is enabled
     auth_settings = SettingsService.get_auth_settings(db)
     if auth_settings and not auth_settings.email_login_enabled:
@@ -35,46 +39,44 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
             detail="Email already registered"
         )
 
-    # For email signup, validate activation code
-    if user.provider != "google":
-        if not user.activation_code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Activation code is required for email signup"
-            )
-        
-        # Get and validate activation code
-        activation_code = ActivationCodeService.get_activation_code(db, user.activation_code)
-        if not activation_code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid activation code"
-            )
-        
-        if activation_code.is_used:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Activation code has already been used"
-            )
-        
-        # Verify user information matches activation code
-        if (activation_code.email != user.email or
-            activation_code.first_name != user.first_name or
-            activation_code.last_name != user.last_name or
-            not verify_password(user.password, activation_code.hashed_password)):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User information does not match activation code"
-            )
-        
-        # Mark activation code as used
-        ActivationCodeService.mark_code_as_used(db, user.activation_code)
+    if not user.activation_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Activation code is required"
+        )
     
-    # Create new user
+    # Get and validate activation code
+    activation_code = ActivationCodeService.get_activation_code(db, user.activation_code)
+    if not activation_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid activation code"
+        )
+    
+    if activation_code.is_used:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Activation code has already been used"
+        )
+    
+    # Verify user information matches activation code
+    if (activation_code.email != user.email or
+        activation_code.first_name != user.first_name or
+        activation_code.last_name != user.last_name or
+        not verify_password(user.password, activation_code.hashed_password)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User information does not match activation code"
+        )
+    
+    # Mark activation code as used
+    ActivationCodeService.mark_code_as_used(db, user.activation_code)
+
+    # Create new user with activation code benefits
     hashed_password = get_password_hash(user.password)
     finiite_api_key = generate_finiite_api_key()
     
-    # Set default storage and agent limits
+    # Set special limits for activation code users
     storage_limit = 1073741824  # 1 GB in bytes
     max_agents = 10
     
@@ -85,14 +87,14 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
         hashed_password=hashed_password,
         provider="credentials",
         finiite_api_key=finiite_api_key,
-        storage_limit_bytes=storage_limit,  # Set 1 GB storage limit
+        storage_limit_bytes=storage_limit,
         storage_used_bytes=0,
-        max_users=max_agents,  # Set 10 agents limit
+        max_users=max_agents,
         current_users=1,
-        trial_status='active'  # Mark as activated instead of trial
+        trial_status='active'
     )
     db.add(db_user)
-    db.flush()  # Flush to get the user ID
+    db.flush()
 
     # Create Stripe customer
     try:
@@ -104,36 +106,93 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
     db.commit()
     db.refresh(db_user)
 
-    # Start trial period only for non-activation code users
-    if user.provider == "google":
-        TrialService.start_trial(db, db_user)
-
     # Log activity
-    metadata = {
-        "provider": "credentials",
-        "stripe_customer_id": db_user.stripe_customer_id,
-    }
-    
-    # Add trial information only if it exists
-    if db_user.trial_start and db_user.trial_end:
-        metadata.update({
-            "trial_start": db_user.trial_start.isoformat(),
-            "trial_end": db_user.trial_end.isoformat(),
-        })
-    elif user.activation_code:
-        metadata.update({
-            "storage_limit_gb": "1",
-            "max_agents": "10",
-            "activation_code": user.activation_code
-        })
-
     await log_activity(
         db=db,
         user_id=db_user.id,
         activity_type="signup",
-        description="User signed up" + (" with activation code" if user.activation_code else " and trial period started"),
+        description="User signed up with activation code",
         request=request,
-        metadata=metadata
+        metadata={
+            "provider": "credentials",
+            "stripe_customer_id": db_user.stripe_customer_id,
+            "storage_limit_gb": "1",
+            "max_agents": "10",
+            "activation_code": user.activation_code
+        }
+    )
+
+    return db_user
+
+@router.post("/signup", response_model=UserResponse)
+async def signup(user: UserCreate, request: Request, db: Session = Depends(get_db)):
+    """
+    Regular signup endpoint for users without activation codes.
+    These users get standard trial period.
+    """
+    # Check if email login is enabled
+    auth_settings = SettingsService.get_auth_settings(db)
+    if auth_settings and not auth_settings.email_login_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email registration is disabled. Please use SSO.",
+        )
+
+    # Check if user exists
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    if user.activation_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="For activation code signup, use /auth/signup/activation endpoint"
+        )
+
+    # Create new user with trial settings
+    hashed_password = get_password_hash(user.password)
+    finiite_api_key = generate_finiite_api_key()
+    
+    db_user = User(
+        email=user.email,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        hashed_password=hashed_password,
+        provider="credentials",
+        finiite_api_key=finiite_api_key
+    )
+    db.add(db_user)
+    db.flush()
+
+    # Create Stripe customer
+    try:
+        customer_id = await SubscriptionService.create_stripe_customer(db_user)
+        db_user.stripe_customer_id = customer_id
+    except Exception as e:
+        print(f"Warning: Could not create Stripe customer: {str(e)}")
+
+    db.commit()
+    db.refresh(db_user)
+
+    # Start trial period
+    TrialService.start_trial(db, db_user)
+
+    # Log activity
+    await log_activity(
+        db=db,
+        user_id=db_user.id,
+        activity_type="signup",
+        description="User signed up with trial period",
+        request=request,
+        metadata={
+            "provider": "credentials",
+            "stripe_customer_id": db_user.stripe_customer_id,
+            "trial_start": db_user.trial_start.isoformat(),
+            "trial_end": db_user.trial_end.isoformat()
+        }
     )
 
     return db_user
@@ -211,7 +270,7 @@ async def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
             finiite_api_key=finiite_api_key
         )
         db.add(db_user)
-        db.flush()  # Flush to get the user ID
+        db.flush()
 
         # Create Stripe customer
         try:
@@ -224,6 +283,9 @@ async def google_auth(user_data: GoogleAuth, db: Session = Depends(get_db)):
             db.commit()
         
         db.refresh(db_user)
+        
+        # Start trial for new Google users
+        TrialService.start_trial(db, db_user)
     
     # Create access token
     access_token_expires = timedelta(minutes=int(config["ACCESS_TOKEN_EXPIRE_MINUTES"]))

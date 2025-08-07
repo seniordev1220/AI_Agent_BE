@@ -70,21 +70,38 @@ class ActivationCodeService:
                     "is_existing": True
                 }
 
-            # Check if the activation code already exists for different credentials
+            # Check if the activation code already exists (regardless of credentials)
             code_exists = db.query(ActivationCode).filter(
-                ActivationCode.activation_code == activation_code,
-                (ActivationCode.email.ilike(activation_code_data.email) == False) |
-                (ActivationCode.first_name.ilike(activation_code_data.first_name) == False) |
-                (ActivationCode.last_name.ilike(activation_code_data.last_name) == False)
+                ActivationCode.activation_code == activation_code
             ).first()
 
             if code_exists:
-                return {
-                    "success": False,
-                    "message": "Unable to generate activation code. Please try with different credentials.",
-                    "activation_code": None,
-                    "is_existing": False
-                }
+                # If it exists with different credentials, return error
+                if (code_exists.email.lower() != activation_code_data.email.lower() or
+                    code_exists.first_name.lower() != activation_code_data.first_name.lower() or
+                    code_exists.last_name.lower() != activation_code_data.last_name.lower()):
+                    return {
+                        "success": False,
+                        "message": "Unable to generate activation code. Please try with different credentials.",
+                        "activation_code": None,
+                        "is_existing": False
+                    }
+                # If it exists with same credentials but different password, return error
+                elif not verify_password(activation_code_data.password, code_exists.hashed_password):
+                    return {
+                        "success": False,
+                        "message": "An activation code already exists for these credentials but with a different password.",
+                        "activation_code": None,
+                        "is_existing": False
+                    }
+                # If it exists with exact same credentials and password, return the existing code
+                else:
+                    return {
+                        "success": True,
+                        "message": "Activation code retrieved successfully",
+                        "activation_code": code_exists,
+                        "is_existing": True
+                    }
 
             # Create new activation code entry
             db_activation_code = ActivationCode(

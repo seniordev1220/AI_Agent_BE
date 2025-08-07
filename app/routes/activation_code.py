@@ -23,4 +23,10 @@ async def create_activation_code(
         activation_code_data=activation_code_data
     )
 
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["message"]
+        )
+    
     return {"activation_code": result["activation_code"].activation_code}
