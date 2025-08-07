@@ -13,6 +13,7 @@ from ..utils.activity_logger import log_activity
 from ..services.trial_service import TrialService
 from ..utils.api_key_validator import generate_finiite_api_key, validate_finiite_api_key
 from ..services.subscription_service import SubscriptionService
+from ..services.activation_code_service import ActivationCodeService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -33,17 +34,62 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
+
+    # For email signup, validate activation code
+    if user.provider != "google":
+        if not user.activation_code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activation code is required for email signup"
+            )
+        
+        # Get and validate activation code
+        activation_code = ActivationCodeService.get_activation_code(db, user.activation_code)
+        if not activation_code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid activation code"
+            )
+        
+        if activation_code.is_used:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activation code has already been used"
+            )
+        
+        # Verify user information matches activation code
+        if (activation_code.email != user.email or
+            activation_code.first_name != user.first_name or
+            activation_code.last_name != user.last_name or
+            not verify_password(user.password, activation_code.hashed_password)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User information does not match activation code"
+            )
+        
+        # Mark activation code as used
+        ActivationCodeService.mark_code_as_used(db, user.activation_code)
     
     # Create new user
     hashed_password = get_password_hash(user.password)
     finiite_api_key = generate_finiite_api_key()
+    
+    # Set default storage and agent limits
+    storage_limit = 1073741824  # 1 GB in bytes
+    max_agents = 10
+    
     db_user = User(
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
         hashed_password=hashed_password,
         provider="credentials",
-        finiite_api_key=finiite_api_key
+        finiite_api_key=finiite_api_key,
+        storage_limit_bytes=storage_limit,  # Set 1 GB storage limit
+        storage_used_bytes=0,
+        max_users=max_agents,  # Set 10 agents limit
+        current_users=1,
+        trial_status='active'  # Mark as activated instead of trial
     )
     db.add(db_user)
     db.flush()  # Flush to get the user ID
@@ -58,22 +104,36 @@ async def signup(user: UserCreate, request: Request, db: Session = Depends(get_d
     db.commit()
     db.refresh(db_user)
 
-    # Start trial period
-    TrialService.start_trial(db, db_user)
+    # Start trial period only for non-activation code users
+    if user.provider == "google":
+        TrialService.start_trial(db, db_user)
 
     # Log activity
+    metadata = {
+        "provider": "credentials",
+        "stripe_customer_id": db_user.stripe_customer_id,
+    }
+    
+    # Add trial information only if it exists
+    if db_user.trial_start and db_user.trial_end:
+        metadata.update({
+            "trial_start": db_user.trial_start.isoformat(),
+            "trial_end": db_user.trial_end.isoformat(),
+        })
+    elif user.activation_code:
+        metadata.update({
+            "storage_limit_gb": "1",
+            "max_agents": "10",
+            "activation_code": user.activation_code
+        })
+
     await log_activity(
         db=db,
         user_id=db_user.id,
         activity_type="signup",
-        description="User signed up and trial period started",
+        description="User signed up" + (" with activation code" if user.activation_code else " and trial period started"),
         request=request,
-        metadata={
-            "provider": "credentials",
-            "trial_start": db_user.trial_start.isoformat(),
-            "trial_end": db_user.trial_end.isoformat(),
-            "stripe_customer_id": db_user.stripe_customer_id
-        }
+        metadata=metadata
     )
 
     return db_user

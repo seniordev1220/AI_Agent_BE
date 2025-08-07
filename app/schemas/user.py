@@ -16,6 +16,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: Optional[str] = None
     provider: Optional[str] = None
+    activation_code: Optional[str] = None  # Required for email signup, optional for OAuth
 
 class UserResponse(UserBase):
     id: int

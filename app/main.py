@@ -2,9 +2,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity, price_plans, embed
+from .routes import auth, users, api_keys, agents, chat, model_settings, data_source, dashboard, payments, settings, activity, price_plans, embed, activation_code
 from .database import engine, SessionLocal
-from .models import user, settings as settings_model, user_activity, price_plan, subscription, payment
+from .models import user, settings as settings_model, user_activity, price_plan, subscription, payment, activation_code as activation_code_model
 from .utils.db_init import create_default_admin, create_default_price_plans, create_test_user
 from .config import config
 import os
@@ -18,6 +18,7 @@ user_activity.Base.metadata.create_all(bind=engine)
 price_plan.Base.metadata.create_all(bind=engine)
 subscription.Base.metadata.create_all(bind=engine)
 payment.Base.metadata.create_all(bind=engine)
+activation_code_model.Base.metadata.create_all(bind=engine)
 
 # Initialize default data
 db = SessionLocal()
@@ -80,6 +81,7 @@ app.include_router(settings.router)
 app.include_router(activity.router)
 app.include_router(price_plans.router)
 app.include_router(embed.router)
+app.include_router(activation_code.router)
 
 @app.get("/")
 def root():
