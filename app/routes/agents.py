@@ -34,14 +34,21 @@ async def create_agent(
             detail=str(e)
         )
 
-    # Check trial or subscription limits
+    # Get existing agents count
     existing_agents_count = db.query(Agent).filter(Agent.user_id == current_user.id).count()
     
-    if current_user.subscription:
-        # Check subscription limits
+    # Special handling for activation code users
+    if current_user.trial_status == 'active' and not current_user.subscription:
+        if existing_agents_count >= 10:
+            raise HTTPException(
+                status_code=403,
+                detail="You have reached the maximum limit of 10 agents with your activation code."
+            )
+    # For subscription users
+    elif current_user.subscription:
         SubscriptionService.check_agent_limit(db, current_user, existing_agents_count)
+    # For trial users
     else:
-        # Check trial limits
         TrialService.check_trial_limits(db, current_user, 'agents', existing_agents_count)
 
     # Handle vector sources if provided
@@ -60,7 +67,7 @@ async def create_agent(
                     detail="One or more vector sources not found or not accessible"
                 )
 
-            vector_source_ids = [vs.id for vs in vector_sources]  # Update the initialized variable
+            vector_source_ids = [vs.id for vs in vector_sources]
 
         except Exception as e:
             print(f"Error validating vector sources: {str(e)}")
@@ -68,13 +75,14 @@ async def create_agent(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Error validating vector sources"
             )
+
     # Create agent
     db_agent = Agent(
         name=agent_create.name,
         description=agent_create.description,
         instructions=agent_create.instructions,
         user_id=current_user.id,
-        vector_sources_ids=vector_source_ids,  # Use the initialized variable
+        vector_sources_ids=vector_source_ids,
         base_model=agent_create.base_model,
         is_private=agent_create.is_private,
         welcome_message=agent_create.welcome_message,
@@ -107,49 +115,42 @@ async def create_agent(
             db_agent.avatar_url = f"/static/avatars/{avatar_filename}"
             
         except Exception as e:
-            # If avatar upload fails, we still want to keep the agent
-            # Just log the error and continue
             print(f"Error saving avatar: {str(e)}")
 
-    # Add to database to get the ID
+    # Add to database
     db.add(db_agent)
     db.commit()
     db.refresh(db_agent)
 
-    # Set up vector source relationships after agent is created
+    # Set up vector source relationships
     if vector_source_ids:
         try:
-            # Associate vector sources with agent using the relationship
             vector_sources = db.query(VectorSource).filter(
                 VectorSource.id.in_(vector_source_ids)
             ).all()
             db_agent.vector_sources = vector_sources
-            
-            # Make sure the vector_sources_ids array is set
             db_agent.vector_sources_ids = vector_source_ids
-            
             db.commit()
             db.refresh(db_agent)
-
         except Exception as e:
             print(f"Error connecting vector sources: {str(e)}")
-            # Don't raise exception, just log the error
-            # The agent is still created, just without vector sources
 
     # Log activity
     await log_activity(
         db=db,
         user_id=current_user.id,
         activity_type="agent_create",
-        description=f"Created agent: {db_agent.name}",
+        description=f"Created agent: {db_agent.name} ({existing_agents_count + 1}/10)" if current_user.trial_status == 'active' and not current_user.subscription else f"Created agent: {db_agent.name}",
         request=request,
         metadata={
             "agent_id": db_agent.id,
             "agent_name": db_agent.name,
             "vector_sources_count": len(db_agent.vector_sources_ids or []),
-            "vector_sources_ids": db_agent.vector_sources_ids,  # Add IDs to activity log
+            "vector_sources_ids": db_agent.vector_sources_ids,
             "has_avatar": avatar is not None,
-            "base_model": db_agent.base_model
+            "base_model": db_agent.base_model,
+            "current_agent_count": existing_agents_count + 1,
+            "max_agents": 10 if current_user.trial_status == 'active' and not current_user.subscription else None
         }
     )
 

@@ -25,6 +25,17 @@ class TrialService:
     @staticmethod
     def check_trial_status(db: Session, user: User) -> dict:
         """Check the trial status and return trial information"""
+        # For users with activation code (status = 'active')
+        if user.trial_status == 'active':
+            return {
+                'has_subscription': False,
+                'trial_active': False,
+                'trial_expired': False,
+                'days_remaining': 0,
+                'message': 'User has activation code benefits'
+            }
+
+        # For users with subscription
         if user.subscription:
             return {
                 'has_subscription': True,
@@ -86,6 +97,10 @@ class TrialService:
         if user.subscription or user.is_test_account:
             return True
 
+        # If user has activation code (status = 'active'), skip trial limits
+        if user.trial_status == 'active':
+            return True
+
         # Check if trial is active
         trial_status = TrialService.check_trial_status(db, user)
         if not trial_status['trial_active']:
@@ -110,4 +125,4 @@ class TrialService:
     @staticmethod
     def get_trial_limits() -> dict:
         """Return the trial limits"""
-        return TrialService.TRIAL_LIMITS 
+        return TrialService.TRIAL_LIMITS
